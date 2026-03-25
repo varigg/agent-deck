@@ -324,6 +324,9 @@ func main() {
 		case "debug-dump":
 			handleDebugDump()
 			return
+		case "google-calendar":
+			handleGoogleCalendar(args[1:])
+			return
 		}
 	}
 
