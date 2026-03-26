@@ -115,7 +115,9 @@ func currentTmuxThemeStyle() tmuxThemeStyle {
 }
 
 func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
-	return fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
+	// #{@agentdeck_calendar} is evaluated by tmux at render time so one global
+	// option update is reflected across all sessions.
+	return fmt.Sprintf("#{@agentdeck_calendar}#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
 }
 
 func (s *Session) projectDisplayName() string {
@@ -1936,7 +1938,7 @@ func (s *Session) buildStatusBarArgs() []string {
 		{"status-style", themeStyle.statusStyle},
 		{"status-left-length", "120"},
 		{"status-right", rightStatus},
-		{"status-right-length", "80"},
+		{"status-right-length", "120"},
 	}
 
 	var args []string
@@ -4378,6 +4380,19 @@ func ClearStatusLeftGlobal() error {
 	}
 	// No saved value — fall back to unset (original behavior)
 	return tmuxExec(socket, "set-option", "-gu", "status-left").Run()
+}
+
+// SetCalendarSegmentGlobal sets the @agentdeck_calendar tmux user option globally.
+// Because status-right includes #{@agentdeck_calendar} as a format prefix, this
+// single call is enough to update all sessions — tmux expands the format at render time.
+func SetCalendarSegmentGlobal(text string) error {
+	escaped := strings.ReplaceAll(text, "'", "'\\''")
+	return exec.Command("tmux", "set-option", "-g", "@agentdeck_calendar", escaped).Run()
+}
+
+// ClearCalendarSegmentGlobal removes the calendar segment from all sessions' status-right.
+func ClearCalendarSegmentGlobal() error {
+	return exec.Command("tmux", "set-option", "-gu", "@agentdeck_calendar").Run()
 }
 
 // InitializeStatusBarOptions sets optimal status bar options for agent-deck.
