@@ -456,7 +456,7 @@ type Home struct {
 	// Calendar integration
 	calendarEvents atomic.Pointer[[]calendar.Event] // latest poll result (nil = not yet loaded)
 	calendarDone    chan struct{}   // closed when calendarTicker goroutine exits
-	calendarInitErr atomic.Value  // stores string error message when init fails; nil means no error recorded
+	calendarInitErr atomic.Pointer[string] // non-nil stores the init error message; nil means no error recorded
 
 }
 
@@ -13798,7 +13798,8 @@ func (h *Home) calendarTicker(cfg *session.GoogleCalendarConfig) {
 	)
 	if err != nil {
 		uiLog.Warn("calendar_init_failed", slog.String("error", err.Error()))
-		h.calendarInitErr.Store(err.Error())
+		msg := err.Error()
+		h.calendarInitErr.Store(&msg)
 		return
 	}
 

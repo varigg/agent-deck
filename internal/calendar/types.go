@@ -56,8 +56,9 @@ func (e Event) Urgency() Urgency {
 	}
 }
 
-// StartsInMinutes returns how many minutes until the event starts, rounded up.
-// Returns 0 for events that have already started or start within the next minute.
+// StartsInMinutes returns how many minutes until the event starts, rounded up
+// (ceiling). Returns 0 only for events that have already started; an event
+// starting in under a minute returns 1.
 func (e Event) StartsInMinutes() int {
 	d := time.Until(e.StartsAt)
 	if d <= 0 {

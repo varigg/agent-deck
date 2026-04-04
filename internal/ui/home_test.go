@@ -2879,7 +2879,8 @@ func TestHandleMainKeyQuickApproveSkipsNonClaudeTool(t *testing.T) {
 
 func TestCalendarSegment_ShowsErrorWhenInitFailed(t *testing.T) {
 	h := &Home{}
-	h.calendarInitErr.Store("token expired - run 'agent-deck google-calendar auth' to re-authorize")
+	msg := "token expired — run 'agent-deck google-calendar auth' to re-authorize"
+	h.calendarInitErr.Store(&msg)
 
 	result := h.calendarSegment()
 	if !strings.Contains(result, "cal:err") {
