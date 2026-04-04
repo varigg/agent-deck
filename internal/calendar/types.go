@@ -56,6 +56,17 @@ func (e Event) Urgency() Urgency {
 	}
 }
 
+// StartsInMinutes returns how many minutes until the event starts, rounded up.
+// Returns 0 for events that have already started or start within the next minute.
+func (e Event) StartsInMinutes() int {
+	d := time.Until(e.StartsAt)
+	if d <= 0 {
+		return 0
+	}
+	// Ceiling division: consistent with TimeUntilLabel's rounding.
+	return int((d + time.Minute - 1) / time.Minute)
+}
+
 // --- Google Calendar API response structs (minimal) ---
 
 // eventsListResponse mirrors the subset of fields we need from

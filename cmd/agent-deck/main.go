@@ -2170,13 +2170,7 @@ func handleStatus(profile string, args []string) {
 					e := events[0]
 					meeting = &meetingInfo{
 						Title:           e.Title,
-						StartsInMinutes: func() int {
-							m := math.Ceil(time.Until(e.StartsAt).Minutes())
-							if m < 0 {
-								return 0
-							}
-							return int(m)
-						}(),
+						StartsInMinutes: e.StartsInMinutes(),
 					}
 				}
 			}

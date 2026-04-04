@@ -102,10 +102,10 @@ func TestCollector_Collect_APIError_IncludesGoogleMessage(t *testing.T) {
 		lookahead:   2 * time.Hour,
 	}
 
-	// Soft-fail: API errors on a calendar are logged and skipped, not returned.
+	// Single-calendar failure returns an error; callers can distinguish broken auth from no events.
 	events, err := c.Collect(context.Background())
-	require.NoError(t, err)
-	assert.Empty(t, events)
+	require.Error(t, err)
+	_ = events
 }
 
 func TestCollector_Collect_APIError_TokenExpiredSuggestsReauth(t *testing.T) {
@@ -123,10 +123,10 @@ func TestCollector_Collect_APIError_TokenExpiredSuggestsReauth(t *testing.T) {
 		lookahead:   2 * time.Hour,
 	}
 
-	// Soft-fail: auth errors are logged and skipped, not returned.
+	// Single-calendar failure returns an error; callers can distinguish broken auth from no events.
 	events, err := c.Collect(context.Background())
-	require.NoError(t, err)
-	assert.Empty(t, events)
+	require.Error(t, err)
+	_ = events
 }
 
 func TestCollector_Collect_RespectsContextCancellation(t *testing.T) {

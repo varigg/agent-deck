@@ -1607,11 +1607,12 @@ async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_
                 next_meeting = summary.get("next_meeting")
                 if next_meeting:
                     title = next_meeting.get("title", "meeting")
-                    mins = next_meeting.get("starts_in_minutes", 0)
-                    if mins <= 0:
-                        parts.append(f"⚠️ User in meeting now: {title}")
-                    elif mins <= 15:
-                        parts.append(f"⚠️ Meeting in {mins}m: {title}")
+                    mins = next_meeting.get("starts_in_minutes")
+                    if isinstance(mins, int):
+                        if mins <= 0:
+                            parts.append(f"⚠️ User in meeting now: {title}")
+                        elif mins <= 15:
+                            parts.append(f"⚠️ Meeting in {mins}m: {title}")
                 # Append HEARTBEAT_RULES.md (per-profile, then global fallback)
                 rules_text = None
                 for rules_path in [

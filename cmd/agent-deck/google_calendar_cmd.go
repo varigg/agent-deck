@@ -2,18 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"time"
-
-	"golang.org/x/oauth2"
 
 	"github.com/asheshgoplani/agent-deck/internal/calendar"
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -63,81 +56,26 @@ func handleGoogleCalendarAuth() {
 		os.Exit(1)
 	}
 
-	// Bind the callback listener before building the redirect URL to avoid
-	// a TOCTOU race where another process grabs the port between probe and serve.
-	listener, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: cannot listen on localhost: %v\n", err)
-		os.Exit(1)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-
-	redirectURL := fmt.Sprintf("http://localhost:%d/callback", port)
-	oauthCfg.RedirectURL = redirectURL
-
-	// Generate a cryptographically random CSRF state token.
-	stateBytes := make([]byte, 16)
-	if _, err := rand.Read(stateBytes); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: cannot generate state token: %v\n", err)
-		os.Exit(1)
-	}
-	oauthState := base64.RawURLEncoding.EncodeToString(stateBytes)
-
-	codeCh := make(chan string, 1)
-	errCh := make(chan error, 1)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("state") != oauthState {
-			errCh <- fmt.Errorf("state mismatch in OAuth callback")
-			http.Error(w, "state mismatch", http.StatusBadRequest)
-			return
-		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			errCh <- fmt.Errorf("no code in callback")
-			fmt.Fprintln(w, "Error: no authorization code received.")
-			return
-		}
-		codeCh <- code
-		fmt.Fprintln(w, "Authorization successful! You can close this tab.")
+	tok, err := calendar.RunLoopbackAuth(context.Background(), oauthCfg, func(authURL string) {
+		fmt.Printf("Opening browser for authorization...\n\n")
+		openBrowser(authURL)
+		fmt.Printf("If the browser didn't open, visit:\n  %s\n\nWaiting for authorization...\n", authURL)
 	})
-	srv := &http.Server{Handler: mux}
-	// Serve returns http.ErrServerClosed on clean shutdown via Shutdown below — expected.
-	go srv.Serve(listener) //nolint:errcheck
-	// Shutdown error is safe to ignore: this single-use auth server exits seconds
-	// after receiving the OAuth code regardless of whether Shutdown returns an error.
-	defer srv.Shutdown(context.Background()) //nolint:errcheck
-
-	authURL := oauthCfg.AuthCodeURL(oauthState, oauth2.AccessTypeOffline)
-	fmt.Printf("Opening browser for authorization...\n\n")
-	openBrowser(authURL)
-	fmt.Printf("If the browser didn't open, visit:\n  %s\n\nWaiting for authorization...\n", authURL)
-
-	select {
-	case code := <-codeCh:
-		tok, err := oauthCfg.Exchange(context.Background(), code)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error exchanging code: %v\n", err)
-			os.Exit(1)
-		}
-		tokenPath := cfg.GoogleCalendar.GetTokenPath()
-		if err := os.MkdirAll(filepath.Dir(tokenPath), 0700); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating token directory: %v\n", err)
-			os.Exit(1)
-		}
-		if err := calendar.SaveToken(tokenPath, tok); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("\nAuthorization successful! Token saved to:\n  %s\n", tokenPath)
-	case err := <-errCh:
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Authorization failed: %v\n", err)
 		os.Exit(1)
-	case <-time.After(5 * time.Minute):
-		fmt.Fprintln(os.Stderr, "Authorization timed out. Run 'agent-deck google-calendar auth' to try again.")
+	}
+
+	tokenPath := cfg.GoogleCalendar.GetTokenPath()
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating token directory: %v\n", err)
 		os.Exit(1)
 	}
+	if err := calendar.SaveToken(tokenPath, tok); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\nAuthorization successful! Token saved to:\n  %s\n", tokenPath)
 }
 
 func handleGoogleCalendarTest() {

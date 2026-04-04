@@ -2745,26 +2745,26 @@ type GoogleCalendarConfig struct {
 }
 
 // GetLookahead parses the Lookahead string into a time.Duration.
-// Returns 2h if empty or unparseable.
+// Returns 2h if empty, unparseable, or non-positive.
 func (c *GoogleCalendarConfig) GetLookahead() time.Duration {
 	if c.Lookahead == "" {
 		return 2 * time.Hour
 	}
 	d, err := time.ParseDuration(c.Lookahead)
-	if err != nil {
+	if err != nil || d <= 0 {
 		return 2 * time.Hour
 	}
 	return d
 }
 
 // GetPollInterval parses the PollInterval string into a time.Duration.
-// Returns 60s if empty or unparseable.
+// Returns 60s if empty, unparseable, or non-positive.
 func (c *GoogleCalendarConfig) GetPollInterval() time.Duration {
 	if c.PollInterval == "" {
 		return 60 * time.Second
 	}
 	d, err := time.ParseDuration(c.PollInterval)
-	if err != nil {
+	if err != nil || d <= 0 {
 		return 60 * time.Second
 	}
 	return d

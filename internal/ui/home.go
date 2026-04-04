@@ -820,6 +820,10 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 
 	tmuxSettings := session.GetTmuxSettings()
 	h.manageTmuxNotifications = tmuxSettings.GetInjectStatusLine()
+	if h.manageTmuxNotifications {
+		// Clear any stale calendar segment from a previous process run.
+		_ = tmux.ClearCalendarSegmentGlobal()
+	}
 
 	// Initialize notification manager if enabled in config and tmux status injection is allowed.
 	// All instances manage the notification bar (they share SQLite state, so produce identical output)
@@ -1711,13 +1715,19 @@ func (h *Home) cleanupNotifications() {
 	// Always unbind status-right mouse click (bound unconditionally at init)
 	tmux.UnbindMouseStatusClicks()
 
-	if !h.manageTmuxNotifications || !h.notificationsEnabled || h.notificationManager == nil {
+	if !h.manageTmuxNotifications {
 		return
 	}
 
-	// Clear global status bars (ONE call each instead of per-session)
-	_ = tmux.ClearStatusLeftGlobal()
+	// Calendar segment is set regardless of notificationsEnabled — always clear it.
 	_ = tmux.ClearCalendarSegmentGlobal()
+
+	if !h.notificationsEnabled || h.notificationManager == nil {
+		return
+	}
+
+	// Clear global notification status bar
+	_ = tmux.ClearStatusLeftGlobal()
 
 	// Unbind all keys (with mutex protection)
 	h.boundKeysMu.Lock()
@@ -3097,24 +3107,26 @@ func (h *Home) syncNotificationsBackground() {
 	}
 
 	// Update calendar segment in status-right (#{@agentdeck_calendar} prefix, ONE global call).
-	// This runs regardless of whether notifications are enabled so the calendar segment
-	// stays current even when the user has disabled the notification bar.
-	calSeg := h.calendarSegment()
-	h.lastCalSegMu.Lock()
-	if calSeg != h.lastCalSeg {
-		h.lastCalSeg = calSeg
-		h.lastCalSegMu.Unlock()
+	// Runs regardless of notificationsEnabled so the calendar segment stays current even when
+	// the notification bar is disabled, but still gated on manageTmuxNotifications.
+	if h.manageTmuxNotifications {
+		calSeg := h.calendarSegment()
+		h.lastCalSegMu.Lock()
+		if calSeg != h.lastCalSeg {
+			h.lastCalSeg = calSeg
+			h.lastCalSegMu.Unlock()
 
-		if calSeg == "" {
-			_ = tmux.ClearCalendarSegmentGlobal()
+			if calSeg == "" {
+				_ = tmux.ClearCalendarSegmentGlobal()
+			} else {
+				_ = tmux.SetCalendarSegmentGlobal(calSeg)
+			}
+
+			statusBarChanged = true
+			notifLog.Info("calendar_updated", slog.String("text", calSeg))
 		} else {
-			_ = tmux.SetCalendarSegmentGlobal(calSeg)
+			h.lastCalSegMu.Unlock()
 		}
-
-		statusBarChanged = true
-		notifLog.Info("calendar_updated", slog.String("text", calSeg))
-	} else {
-		h.lastCalSegMu.Unlock()
 	}
 
 	// Force immediate visual update (bypasses 15-second status-interval) only when needed.
@@ -13865,7 +13877,7 @@ func (h *Home) calendarSegment() string {
 
 	e := events[0]
 	label := e.TimeUntilLabel()
-	title := runewidth.Truncate(e.Title, 20, "..")
+	title := strings.ReplaceAll(runewidth.Truncate(e.Title, 20, ".."), "#", "##")
 
 	var color string
 	switch e.Urgency() {

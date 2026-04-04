@@ -79,6 +79,8 @@ func (c *Collector) Collect(ctx context.Context) ([]Event, error) {
 	timeMax := now.Add(c.lookahead).Format(time.RFC3339)
 
 	var all []Event
+	var firstErr error
+	successCount := 0
 	for _, calID := range c.calendarIDs {
 		events, err := c.fetchEvents(ctx, calID, timeMin, timeMax)
 		if err != nil {
@@ -88,9 +90,19 @@ func (c *Collector) Collect(ctx context.Context) ([]Event, error) {
 			}
 			slog.Warn("calendar: skipping calendar due to fetch error",
 				slog.String("calendarID", calID), slog.String("error", err.Error()))
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
+		successCount++
 		all = append(all, events...)
+	}
+
+	// Return an error only when every calendar fetch failed so callers can distinguish
+	// "no events" from "calendar API is broken". Partial failures are soft-skipped above.
+	if successCount == 0 && firstErr != nil {
+		return nil, firstErr
 	}
 
 	sort.Slice(all, func(i, j int) bool {
@@ -136,8 +148,14 @@ func (c *Collector) fetchEvents(ctx context.Context, calendarID, timeMin, timeMa
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
+	return parseEventItems(calendarID, body.Items), nil
+}
+
+// parseEventItems converts raw API response items to domain Events,
+// skipping cancelled events, all-day events, and items with unparseable timestamps.
+func parseEventItems(calendarID string, items []eventResource) []Event {
 	var events []Event
-	for _, item := range body.Items {
+	for _, item := range items {
 		if item.Status == "cancelled" {
 			continue
 		}
@@ -171,7 +189,7 @@ func (c *Collector) fetchEvents(ctx context.Context, calendarID, timeMin, timeMa
 			CalendarID: calendarID,
 		})
 	}
-	return events, nil
+	return events
 }
 
 // readErrorMessage extracts the human-readable message from a Google API error
