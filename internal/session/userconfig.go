@@ -2793,3 +2793,13 @@ func (c *GoogleCalendarConfig) GetTokenPath() string {
 	}
 	return filepath.Join(dir, "google-calendar-token.json")
 }
+
+// GetSnapshotPath returns the path where the TUI persists its latest calendar
+// event list for consumption by short-lived subprocesses (e.g. status --json).
+func (c *GoogleCalendarConfig) GetSnapshotPath() string {
+	dir, err := GetAgentDeckDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "google-calendar-snapshot.json")
+}

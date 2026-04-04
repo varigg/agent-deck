@@ -67,6 +67,28 @@ func (e Event) StartsInMinutes() int {
 	return int((d + time.Minute - 1) / time.Minute)
 }
 
+// MeetingInfo is a compact summary of an upcoming event suitable for JSON
+// serialisation (e.g. agent-deck status --json) and external consumers like
+// the conductor heartbeat.
+type MeetingInfo struct {
+	Title           string `json:"title"`
+	StartsInMinutes int    `json:"starts_in_minutes"`
+}
+
+// NextMeeting returns a MeetingInfo for the first event in the slice, or nil
+// when the slice is empty. It is the caller's responsibility to pass a slice
+// that is already sorted by start time.
+func NextMeeting(events []Event) *MeetingInfo {
+	if len(events) == 0 {
+		return nil
+	}
+	e := events[0]
+	return &MeetingInfo{
+		Title:           e.Title,
+		StartsInMinutes: e.StartsInMinutes(),
+	}
+}
+
 // --- Google Calendar API response structs (minimal) ---
 
 // eventsListResponse mirrors the subset of fields we need from

@@ -2051,11 +2051,6 @@ type statusCounts struct {
 	total   int
 }
 
-// meetingInfo is the JSON representation of the next upcoming calendar event.
-type meetingInfo struct {
-	Title           string `json:"title"`
-	StartsInMinutes int    `json:"starts_in_minutes"`
-}
 
 // countByStatus counts sessions by their status
 func countByStatus(instances []*session.Instance) statusCounts {
@@ -2140,39 +2135,23 @@ func handleStatus(profile string, args []string) {
 	// Output based on flags
 	if *jsonOutput {
 		type statusJSON struct {
-			Waiting     int          `json:"waiting"`
-			Running     int          `json:"running"`
-			Idle        int          `json:"idle"`
-			Error       int          `json:"error"`
-			Stopped     int          `json:"stopped"`
-			Total       int          `json:"total"`
-			NextMeeting *meetingInfo `json:"next_meeting,omitempty"`
+			Waiting     int                  `json:"waiting"`
+			Running     int                  `json:"running"`
+			Idle        int                  `json:"idle"`
+			Error       int                  `json:"error"`
+			Stopped     int                  `json:"stopped"`
+			Total       int                  `json:"total"`
+			NextMeeting *calendar.MeetingInfo `json:"next_meeting,omitempty"`
 		}
-		var meeting *meetingInfo
+		var meeting *calendar.MeetingInfo
 		if cfg, cfgErr := session.LoadUserConfig(); cfgErr != nil {
 			slog.Warn("calendar: config load failed", slog.String("error", cfgErr.Error()))
 		} else if cfg.GoogleCalendar.Enabled {
-			collector, err := calendar.NewCollectorFromConfig(
-				cfg.GoogleCalendar.GetCredentialsPath(),
-				cfg.GoogleCalendar.GetTokenPath(),
-				cfg.GoogleCalendar.CalendarIDs,
-				cfg.GoogleCalendar.GetLookahead(),
-			)
-			if err != nil {
-				slog.Warn("calendar: collector init failed", slog.String("error", err.Error()))
+			events, snapErr := calendar.ReadSnapshot(cfg.GoogleCalendar.GetSnapshotPath())
+			if snapErr != nil {
+				slog.Warn("calendar: snapshot read failed", slog.String("error", snapErr.Error()))
 			} else {
-				calCtx, calCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer calCancel()
-				events, collectErr := collector.Collect(calCtx)
-				if collectErr != nil {
-					slog.Warn("calendar: collect failed", slog.String("error", collectErr.Error()))
-				} else if len(events) > 0 {
-					e := events[0]
-					meeting = &meetingInfo{
-						Title:           e.Title,
-						StartsInMinutes: e.StartsInMinutes(),
-					}
-				}
+				meeting = calendar.NextMeeting(events)
 			}
 		}
 		output, err := json.Marshal(statusJSON{

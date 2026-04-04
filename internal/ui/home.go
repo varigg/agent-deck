@@ -13802,6 +13802,8 @@ func (h *Home) calendarTicker(cfg *session.GoogleCalendarConfig) {
 		return
 	}
 
+	snapshotPath := cfg.GetSnapshotPath()
+
 	poll := func() {
 		events, err := collector.Collect(h.ctx)
 		if err != nil {
@@ -13809,6 +13811,11 @@ func (h *Home) calendarTicker(cfg *session.GoogleCalendarConfig) {
 			return
 		}
 		h.calendarEvents.Store(&events)
+		if snapshotPath != "" {
+			if writeErr := calendar.WriteSnapshot(snapshotPath, events); writeErr != nil {
+				uiLog.Warn("calendar_snapshot_write_failed", slog.String("error", writeErr.Error()))
+			}
+		}
 	}
 
 	poll() // Collect immediately on startup
