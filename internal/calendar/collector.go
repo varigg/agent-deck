@@ -82,7 +82,13 @@ func (c *Collector) Collect(ctx context.Context) ([]Event, error) {
 	for _, calID := range c.calendarIDs {
 		events, err := c.fetchEvents(ctx, calID, timeMin, timeMax)
 		if err != nil {
-			return nil, fmt.Errorf("calendar %s: %w", calID, err)
+			// Context cancellation means the caller is shutting down — propagate immediately.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			slog.Warn("calendar: skipping calendar due to fetch error",
+				slog.String("calendarID", calID), slog.String("error", err.Error()))
+			continue
 		}
 		all = append(all, events...)
 	}
@@ -105,6 +111,9 @@ func (c *Collector) fetchEvents(ctx context.Context, calendarID, timeMin, timeMa
 	q.Set("timeMax", timeMax)
 	q.Set("singleEvents", "true")
 	q.Set("orderBy", "startTime")
+	// nextPageToken is intentionally omitted from the fields selector: with a
+	// 2h lookahead window and singleEvents=true, hitting the 250-event default
+	// page size is effectively impossible in practice.
 	q.Set("fields", "items(summary,status,start,end)")
 	req.URL.RawQuery = q.Encode()
 

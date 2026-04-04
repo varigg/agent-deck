@@ -67,7 +67,6 @@ func TestPersistingTokenSource_SavesOnTokenChange(t *testing.T) {
 	original := &oauth2.Token{AccessToken: "old-access", RefreshToken: "refresh"}
 	refreshed := &oauth2.Token{AccessToken: "new-access", RefreshToken: "refresh"}
 
-	calls := 0
 	inner := &staticTokenSource{tokens: []*oauth2.Token{original, refreshed}, t: t}
 	pts := &persistingTokenSource{inner: inner, tokenPath: path, last: original.AccessToken}
 
@@ -76,8 +75,6 @@ func TestPersistingTokenSource_SavesOnTokenChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "old-access", tok.AccessToken)
 	assert.NoFileExists(t, path, "saveToken should not be called when token unchanged")
-
-	_ = calls
 
 	// Second call: token changed — saveToken must persist the new token.
 	tok, err = pts.Token()

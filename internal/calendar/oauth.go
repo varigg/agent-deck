@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -51,6 +52,7 @@ func saveToken(path string, tok *oauth2.Token) error {
 // disk whenever the access token changes, ensuring long-running processes
 // survive token rotation across restarts.
 type persistingTokenSource struct {
+	mu        sync.Mutex
 	inner     oauth2.TokenSource
 	tokenPath string
 	last      string // last seen access token
@@ -61,8 +63,13 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tok.AccessToken != p.last {
+	p.mu.Lock()
+	changed := tok.AccessToken != p.last
+	if changed {
 		p.last = tok.AccessToken
+	}
+	p.mu.Unlock()
+	if changed {
 		if saveErr := saveToken(p.tokenPath, tok); saveErr != nil {
 			slog.Warn("calendar: failed to persist refreshed token",
 				slog.String("path", p.tokenPath), slog.String("error", saveErr.Error()))

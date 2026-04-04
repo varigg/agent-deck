@@ -4324,9 +4324,7 @@ func ListAgentDeckSessions() ([]string, error) {
 // SetStatusLeft sets the left side of tmux status bar for a session.
 // Used by NotificationManager to display waiting session notifications.
 func SetStatusLeft(sessionName, text string) error {
-	// Escape single quotes for tmux by replacing ' with '\''
-	escaped := strings.ReplaceAll(text, "'", "'\\''")
-	cmd := tmuxExec(DefaultSocketName(), "set-option", "-t", sessionName, "status-left", escaped)
+	cmd := tmuxExec(DefaultSocketName(), "set-option", "-t", sessionName, "status-left", text)
 	return cmd.Run()
 }
 
@@ -4363,8 +4361,7 @@ func captureOriginalStatusLeft() {
 // On first call, captures the existing status-left so ClearStatusLeftGlobal can restore it.
 func SetStatusLeftGlobal(text string) error {
 	savedStatusLeft.Do(captureOriginalStatusLeft)
-	escaped := strings.ReplaceAll(text, "'", "'\\''")
-	cmd := tmuxExec(DefaultSocketName(), "set-option", "-g", "status-left", escaped)
+	cmd := tmuxExec(DefaultSocketName(), "set-option", "-g", "status-left", text)
 	return cmd.Run()
 }
 
@@ -4375,8 +4372,7 @@ func SetStatusLeftGlobal(text string) error {
 func ClearStatusLeftGlobal() error {
 	socket := DefaultSocketName()
 	if savedStatusLeft.captured {
-		escaped := strings.ReplaceAll(savedStatusLeft.value, "'", "'\\''")
-		return tmuxExec(socket, "set-option", "-g", "status-left", escaped).Run()
+		return tmuxExec(socket, "set-option", "-g", "status-left", savedStatusLeft.value).Run()
 	}
 	// No saved value — fall back to unset (original behavior)
 	return tmuxExec(socket, "set-option", "-gu", "status-left").Run()
@@ -4386,8 +4382,7 @@ func ClearStatusLeftGlobal() error {
 // Because status-right includes #{@agentdeck_calendar} as a format prefix, this
 // single call is enough to update all sessions — tmux expands the format at render time.
 func SetCalendarSegmentGlobal(text string) error {
-	escaped := strings.ReplaceAll(text, "'", "'\\''")
-	return exec.Command("tmux", "set-option", "-g", "@agentdeck_calendar", escaped).Run()
+	return exec.Command("tmux", "set-option", "-g", "@agentdeck_calendar", text).Run()
 }
 
 // ClearCalendarSegmentGlobal removes the calendar segment from all sessions' status-right.

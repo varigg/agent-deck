@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -121,6 +122,10 @@ func handleGoogleCalendarAuth() {
 			os.Exit(1)
 		}
 		tokenPath := cfg.GoogleCalendar.GetTokenPath()
+		if err := os.MkdirAll(filepath.Dir(tokenPath), 0700); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating token directory: %v\n", err)
+			os.Exit(1)
+		}
 		if err := calendar.SaveToken(tokenPath, tok); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
 			os.Exit(1)

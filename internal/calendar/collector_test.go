@@ -102,9 +102,10 @@ func TestCollector_Collect_APIError_IncludesGoogleMessage(t *testing.T) {
 		lookahead:   2 * time.Hour,
 	}
 
-	_, err := c.Collect(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Calendar usage limits exceeded.")
+	// Soft-fail: API errors on a calendar are logged and skipped, not returned.
+	events, err := c.Collect(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, events)
 }
 
 func TestCollector_Collect_APIError_TokenExpiredSuggestsReauth(t *testing.T) {
@@ -122,9 +123,10 @@ func TestCollector_Collect_APIError_TokenExpiredSuggestsReauth(t *testing.T) {
 		lookahead:   2 * time.Hour,
 	}
 
-	_, err := c.Collect(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "agent-deck google-calendar auth")
+	// Soft-fail: auth errors are logged and skipped, not returned.
+	events, err := c.Collect(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, events)
 }
 
 func TestCollector_Collect_RespectsContextCancellation(t *testing.T) {

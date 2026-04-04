@@ -2784,7 +2784,8 @@ func (c *GoogleCalendarConfig) GetCredentialsPath() string {
 }
 
 // GetTokenPath returns the path where the OAuth token is cached.
-// Always next to the credentials file: ~/.agent-deck/google-calendar-token.json
+// The token is always stored in the agent-deck data directory (~/.agent-deck/google-calendar-token.json),
+// regardless of where the credentials file is located.
 func (c *GoogleCalendarConfig) GetTokenPath() string {
 	dir, err := GetAgentDeckDir()
 	if err != nil {

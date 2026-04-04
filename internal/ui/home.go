@@ -456,7 +456,7 @@ type Home struct {
 	// Calendar integration
 	calendarEvents atomic.Pointer[[]calendar.Event] // latest poll result (nil = not yet loaded)
 	calendarDone    chan struct{}   // closed when calendarTicker goroutine exits
-	calendarInitErr atomic.Value  // stores string error message when init fails; empty means no error
+	calendarInitErr atomic.Value  // stores string error message when init fails; nil means no error recorded
 
 }
 
@@ -3011,89 +3011,94 @@ func (h *Home) syncNotificationsBackground() {
 		}
 	}()
 
-	if !h.manageTmuxNotifications || !h.notificationsEnabled || h.notificationManager == nil {
-		return
-	}
+	// Track whether either tmux segment changed so we know whether to refresh.
+	var statusBarChanged bool
 
-	// Phase 1: Check for signal file from Ctrl+b 1-6 shortcuts
-	// CRITICAL: This must be done in background sync too, because the foreground
-	// sync might not run when user is attached to a session (tea.Exec pauses TUI)
-	var sessionToAcknowledgeID string
-	if signalSessionID := tmux.ReadAndClearAckSignal(); signalSessionID != "" {
-		sessionToAcknowledgeID = signalSessionID
-		notifLog.Debug("signal_found", slog.String("session_id", signalSessionID))
+	// Notification bar updates are gated on notifications being enabled.
+	if h.manageTmuxNotifications && h.notificationsEnabled && h.notificationManager != nil {
+		// Phase 1: Check for signal file from Ctrl+b 1-6 shortcuts
+		// CRITICAL: This must be done in background sync too, because the foreground
+		// sync might not run when user is attached to a session (tea.Exec pauses TUI)
+		var sessionToAcknowledgeID string
+		if signalSessionID := tmux.ReadAndClearAckSignal(); signalSessionID != "" {
+			sessionToAcknowledgeID = signalSessionID
+			notifLog.Debug("signal_found", slog.String("session_id", signalSessionID))
 
-		// Track notification switch during attach for cursor sync on detach
-		if h.isAttaching.Load() {
-			h.lastNotifSwitchMu.Lock()
-			h.lastNotifSwitchID = signalSessionID
-			h.lastNotifSwitchMu.Unlock()
-			notifLog.Debug("attach_switch_recorded", slog.String("session_id", signalSessionID))
-		}
-	}
-
-	// Get current instances (copy to avoid race with main goroutine)
-	h.instancesMu.RLock()
-	instances := make([]*session.Instance, len(h.instances))
-	copy(instances, h.instances)
-
-	// Phase 2: Acknowledge the session if signal was received
-	if sessionToAcknowledgeID != "" {
-		if inst, ok := h.instanceByID[sessionToAcknowledgeID]; ok {
-			if ts := inst.GetTmuxSession(); ts != nil {
-				ts.Acknowledge()
-				// Persist ack to SQLite so other instances see it
-				if db := statedb.GetGlobal(); db != nil {
-					_ = db.SetAcknowledged(inst.ID, true)
-				}
-				_ = inst.UpdateStatus()
-				notifLog.Debug(
-					"session_acknowledged",
-					slog.String("title", inst.Title),
-					slog.String("status", string(inst.Status)),
-				)
+			// Track notification switch during attach for cursor sync on detach
+			if h.isAttaching.Load() {
+				h.lastNotifSwitchMu.Lock()
+				h.lastNotifSwitchID = signalSessionID
+				h.lastNotifSwitchMu.Unlock()
+				notifLog.Debug("attach_switch_recorded", slog.String("session_id", signalSessionID))
 			}
 		}
-	}
-	h.instancesMu.RUnlock()
 
-	// Detect currently attached session (may be the user's session during tea.Exec)
-	currentSessionID := h.getAttachedSessionID()
+		// Get current instances (copy to avoid race with main goroutine)
+		h.instancesMu.RLock()
+		instances := make([]*session.Instance, len(h.instances))
+		copy(instances, h.instances)
 
-	// Signal file takes priority for determining "current" session
-	if sessionToAcknowledgeID != "" {
-		currentSessionID = sessionToAcknowledgeID
-	}
+		// Phase 2: Acknowledge the session if signal was received
+		if sessionToAcknowledgeID != "" {
+			if inst, ok := h.instanceByID[sessionToAcknowledgeID]; ok {
+				if ts := inst.GetTmuxSession(); ts != nil {
+					ts.Acknowledge()
+					// Persist ack to SQLite so other instances see it
+					if db := statedb.GetGlobal(); db != nil {
+						_ = db.SetAcknowledged(inst.ID, true)
+					}
+					_ = inst.UpdateStatus()
+					notifLog.Debug(
+						"session_acknowledged",
+						slog.String("title", inst.Title),
+						slog.String("status", string(inst.Status)),
+					)
+				}
+			}
+		}
+		h.instancesMu.RUnlock()
 
-	notifLog.Debug(
-		"sync_state",
-		slog.String("current_session_id", currentSessionID),
-		slog.Int("instances", len(instances)),
-	)
+		// Detect currently attached session (may be the user's session during tea.Exec)
+		currentSessionID := h.getAttachedSessionID()
 
-	// Sync notification manager with current states
-	h.notificationManager.SyncFromInstances(instances, currentSessionID)
-
-	// Update notification bar (status-left) — only notification text, no calendar
-	barText := h.notificationManager.FormatBar()
-
-	h.lastBarTextMu.Lock()
-	if barText != h.lastBarText {
-		h.lastBarText = barText
-		h.lastBarTextMu.Unlock()
-
-		if barText == "" {
-			_ = tmux.ClearStatusLeftGlobal()
-		} else {
-			_ = tmux.SetStatusLeftGlobal(barText)
+		// Signal file takes priority for determining "current" session
+		if sessionToAcknowledgeID != "" {
+			currentSessionID = sessionToAcknowledgeID
 		}
 
-		notifLog.Info("bar_updated", slog.String("text", barText))
-	} else {
-		h.lastBarTextMu.Unlock()
+		notifLog.Debug(
+			"sync_state",
+			slog.String("current_session_id", currentSessionID),
+			slog.Int("instances", len(instances)),
+		)
+
+		// Sync notification manager with current states
+		h.notificationManager.SyncFromInstances(instances, currentSessionID)
+
+		// Update notification bar (status-left) — only notification text, no calendar
+		barText := h.notificationManager.FormatBar()
+
+		h.lastBarTextMu.Lock()
+		if barText != h.lastBarText {
+			h.lastBarText = barText
+			h.lastBarTextMu.Unlock()
+
+			if barText == "" {
+				_ = tmux.ClearStatusLeftGlobal()
+			} else {
+				_ = tmux.SetStatusLeftGlobal(barText)
+			}
+
+			statusBarChanged = true
+			notifLog.Info("bar_updated", slog.String("text", barText))
+		} else {
+			h.lastBarTextMu.Unlock()
+		}
 	}
 
-	// Update calendar segment in status-right (#{@agentdeck_calendar} prefix, ONE global call)
+	// Update calendar segment in status-right (#{@agentdeck_calendar} prefix, ONE global call).
+	// This runs regardless of whether notifications are enabled so the calendar segment
+	// stays current even when the user has disabled the notification bar.
 	calSeg := h.calendarSegment()
 	h.lastCalSegMu.Lock()
 	if calSeg != h.lastCalSeg {
@@ -3106,13 +3111,16 @@ func (h *Home) syncNotificationsBackground() {
 			_ = tmux.SetCalendarSegmentGlobal(calSeg)
 		}
 
+		statusBarChanged = true
 		notifLog.Info("calendar_updated", slog.String("text", calSeg))
 	} else {
 		h.lastCalSegMu.Unlock()
 	}
 
-	// Force immediate visual update (bypasses 15-second status-interval) when either changed
-	_ = tmux.RefreshStatusBarImmediate()
+	// Force immediate visual update (bypasses 15-second status-interval) only when needed.
+	if statusBarChanged {
+		_ = tmux.RefreshStatusBarImmediate()
+	}
 
 	// CRITICAL: Update key bindings in background too!
 	// This fixes the bug where key bindings became stale when TUI was paused (tea.Exec).
@@ -13824,10 +13832,7 @@ func (h *Home) calendarTUISegment() string {
 
 	e := events[0]
 	label := e.TimeUntilLabel()
-	title := e.Title
-	if len(title) > 20 {
-		title = title[:18] + ".."
-	}
+	title := runewidth.Truncate(e.Title, 20, "..")
 
 	var color lipgloss.Color
 	switch e.Urgency() {
@@ -13860,10 +13865,7 @@ func (h *Home) calendarSegment() string {
 
 	e := events[0]
 	label := e.TimeUntilLabel()
-	title := e.Title
-	if len(title) > 20 {
-		title = title[:18] + ".."
-	}
+	title := runewidth.Truncate(e.Title, 20, "..")
 
 	var color string
 	switch e.Urgency() {

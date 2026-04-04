@@ -35,6 +35,9 @@ func (e Event) TimeUntilLabel() string {
 	h := mins / 60
 	m := mins % 60
 	if h > 0 {
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
 		return fmt.Sprintf("%dh%dm", h, m)
 	}
 	return fmt.Sprintf("%dm", m)
