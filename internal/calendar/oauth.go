@@ -13,8 +13,8 @@ import (
 
 const calendarReadonlyScope = "https://www.googleapis.com/auth/calendar.readonly"
 
-// parseCredentials reads a Google Cloud credentials.json and returns an oauth2 config.
-func parseCredentials(path string) (*oauth2.Config, error) {
+// ParseCredentials reads a Google Cloud credentials.json and returns an oauth2 config.
+func ParseCredentials(path string) (*oauth2.Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read credentials: %w", err)
@@ -39,8 +39,8 @@ func loadToken(path string) (*oauth2.Token, error) {
 	return &tok, nil
 }
 
-// saveToken writes an oauth2.Token to disk with restrictive permissions.
-func saveToken(path string, tok *oauth2.Token) error {
+// SaveToken writes an oauth2.Token to disk with restrictive permissions.
+func SaveToken(path string, tok *oauth2.Token) error {
 	data, err := json.Marshal(tok)
 	if err != nil {
 		return fmt.Errorf("encode token: %w", err)
@@ -70,20 +70,10 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 	}
 	p.mu.Unlock()
 	if changed {
-		if saveErr := saveToken(p.tokenPath, tok); saveErr != nil {
+		if saveErr := SaveToken(p.tokenPath, tok); saveErr != nil {
 			slog.Warn("calendar: failed to persist refreshed token",
 				slog.String("path", p.tokenPath), slog.String("error", saveErr.Error()))
 		}
 	}
 	return tok, nil
-}
-
-// ParseCredentials is the exported version of parseCredentials.
-func ParseCredentials(path string) (*oauth2.Config, error) {
-	return parseCredentials(path)
-}
-
-// SaveToken is the exported version of saveToken.
-func SaveToken(path string, tok *oauth2.Token) error {
-	return saveToken(path, tok)
 }

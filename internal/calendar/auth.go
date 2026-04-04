@@ -13,11 +13,12 @@ import (
 )
 
 // RunLoopbackAuth performs a complete loopback OAuth2 authorization flow.
-// It binds an ephemeral TCP port, sets cfg.RedirectURL accordingly, generates a
-// CSRF state token, starts a short-lived callback server, and calls onAuthURL
-// with the authorization URL (so the caller can open a browser or print it).
-// The function blocks until the user authorizes (or denies), then exchanges the
-// code for a token and returns it. Times out after 5 minutes.
+// It binds an ephemeral TCP port, generates a CSRF state token, starts a
+// short-lived callback server, and calls onAuthURL with the authorization URL
+// (so the caller can open a browser or print it). The function blocks until
+// the user authorizes (or denies), then exchanges the code for a token and
+// returns it. Times out after 5 minutes. The caller's *oauth2.Config is not
+// modified.
 func RunLoopbackAuth(ctx context.Context, cfg *oauth2.Config, onAuthURL func(authURL string)) (*oauth2.Token, error) {
 	// Bind before building the redirect URL to avoid a TOCTOU race where another
 	// process grabs the ephemeral port between probe and serve.
@@ -27,7 +28,9 @@ func RunLoopbackAuth(ctx context.Context, cfg *oauth2.Config, onAuthURL func(aut
 	}
 
 	port := listener.Addr().(*net.TCPAddr).Port
-	cfg.RedirectURL = fmt.Sprintf("http://localhost:%d/callback", port)
+	localCfg := *cfg
+	localCfg.RedirectURL = fmt.Sprintf("http://localhost:%d/callback", port)
+	cfg = &localCfg
 
 	// Generate a cryptographically random CSRF state token.
 	stateBytes := make([]byte, 16)

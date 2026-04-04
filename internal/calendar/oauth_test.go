@@ -47,7 +47,7 @@ func TestSaveToken(t *testing.T) {
 		Expiry:       time.Now().Add(time.Hour),
 	}
 
-	require.NoError(t, saveToken(path, tok))
+	require.NoError(t, SaveToken(path, tok))
 
 	// Verify file permissions
 	info, err := os.Stat(path)
@@ -117,7 +117,7 @@ func TestParseCredentials(t *testing.T) {
 	path := filepath.Join(dir, "credentials.json")
 	require.NoError(t, os.WriteFile(path, []byte(creds), 0600))
 
-	cfg, err := parseCredentials(path)
+	cfg, err := ParseCredentials(path)
 	require.NoError(t, err)
 	assert.Equal(t, "123.apps.googleusercontent.com", cfg.ClientID)
 }

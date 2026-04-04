@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -45,7 +45,7 @@ func NewCollector(client *http.Client, calendarIDs []string, lookahead time.Dura
 // Uses primitive parameters to avoid an import cycle with internal/session.
 // Call this from callers that have already extracted config values.
 func NewCollectorFromConfig(credentialsPath, tokenPath string, calendarIDs []string, lookahead time.Duration) (*Collector, error) {
-	oauthCfg, err := parseCredentials(credentialsPath)
+	oauthCfg, err := ParseCredentials(credentialsPath)
 	if err != nil {
 		return nil, fmt.Errorf("credentials: %w", err)
 	}
@@ -105,8 +105,8 @@ func (c *Collector) Collect(ctx context.Context) ([]Event, error) {
 		return nil, firstErr
 	}
 
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].StartsAt.Before(all[j].StartsAt)
+	slices.SortFunc(all, func(a, b Event) int {
+		return a.StartsAt.Compare(b.StartsAt)
 	})
 	return all, nil
 }
