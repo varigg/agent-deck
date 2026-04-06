@@ -3,7 +3,6 @@ package calendar
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"sync"
 
@@ -71,8 +70,8 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 	p.mu.Unlock()
 	if changed {
 		if saveErr := SaveToken(p.tokenPath, tok); saveErr != nil {
-			slog.Warn("calendar: failed to persist refreshed token",
-				slog.String("path", p.tokenPath), slog.String("error", saveErr.Error()))
+			calLog.Warn("failed to persist refreshed token",
+				"path", p.tokenPath, "error", saveErr.Error())
 		}
 	}
 	return tok, nil

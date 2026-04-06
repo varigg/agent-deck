@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
 	"time"
 
 	"golang.org/x/oauth2"
+
+	"github.com/asheshgoplani/agent-deck/internal/logging"
 )
+
+var calLog = logging.ForComponent("calendar")
 
 const defaultBaseURL = "https://www.googleapis.com"
 
@@ -88,8 +91,8 @@ func (c *Collector) Collect(ctx context.Context) ([]Event, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			slog.Warn("calendar: skipping calendar due to fetch error",
-				slog.String("calendarID", calID), slog.String("error", err.Error()))
+			calLog.Warn("skipping calendar due to fetch error",
+				"calendarID", calID, "error", err.Error())
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -165,7 +168,7 @@ func parseEventItems(calendarID string, items []eventResource) []Event {
 		}
 		startTime, err := time.Parse(time.RFC3339, item.Start.DateTime)
 		if err != nil {
-			slog.Warn("calendar: skipping event with unparseable start time",
+			calLog.Warn("skipping event with unparseable start time",
 				"summary", item.Summary, "dateTime", item.Start.DateTime, "error", err)
 			continue
 		}
@@ -174,7 +177,7 @@ func parseEventItems(calendarID string, items []eventResource) []Event {
 			var endErr error
 			endTime, endErr = time.Parse(time.RFC3339, item.End.DateTime)
 			if endErr != nil {
-				slog.Warn("calendar: unparseable end time, using zero",
+				calLog.Warn("unparseable end time, using zero",
 					"summary", item.Summary, "dateTime", item.End.DateTime, "error", endErr)
 			}
 		}
