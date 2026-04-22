@@ -73,12 +73,17 @@ func NewCollectorFromConfig(credentialsPath, tokenPath string, calendarIDs []str
 	return NewCollector(client, calendarIDs, lookahead), nil
 }
 
+// lookBack is the window behind now used when querying for events, so that
+// meetings that have already started but not yet ended are included in results.
+const lookBack = time.Hour
+
 // Collect fetches upcoming timed events across all configured calendars.
 // Returns events sorted by start time. All-day and cancelled events are excluded.
-// The context is forwarded to each HTTP request; cancellation aborts in-flight calls.
+// Events that have already ended are filtered out. The context is forwarded to
+// each HTTP request; cancellation aborts in-flight calls.
 func (c *Collector) Collect(ctx context.Context) ([]Event, error) {
 	now := time.Now()
-	timeMin := now.Format(time.RFC3339)
+	timeMin := now.Add(-lookBack).Format(time.RFC3339)
 	timeMax := now.Add(c.lookahead).Format(time.RFC3339)
 
 	var all []Event
@@ -108,10 +113,19 @@ func (c *Collector) Collect(ctx context.Context) ([]Event, error) {
 		return nil, firstErr
 	}
 
-	slices.SortFunc(all, func(a, b Event) int {
+	// Filter out events that have already ended (brought in by the look-back window).
+	active := all[:0]
+	for _, e := range all {
+		if !e.EndsAt.IsZero() && !e.EndsAt.After(now) {
+			continue
+		}
+		active = append(active, e)
+	}
+
+	slices.SortFunc(active, func(a, b Event) int {
 		return a.StartsAt.Compare(b.StartsAt)
 	})
-	return all, nil
+	return active, nil
 }
 
 func (c *Collector) fetchEvents(ctx context.Context, calendarID, timeMin, timeMax string) ([]Event, error) {

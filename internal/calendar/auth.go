@@ -26,6 +26,7 @@ func RunLoopbackAuth(ctx context.Context, cfg *oauth2.Config, onAuthURL func(aut
 	if err != nil {
 		return nil, fmt.Errorf("cannot listen on localhost: %w", err)
 	}
+	defer listener.Close() //nolint:errcheck
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	localCfg := *cfg

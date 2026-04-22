@@ -4382,12 +4382,12 @@ func ClearStatusLeftGlobal() error {
 // Because status-right includes #{@agentdeck_calendar} as a format prefix, this
 // single call is enough to update all sessions — tmux expands the format at render time.
 func SetCalendarSegmentGlobal(text string) error {
-	return exec.Command("tmux", "set-option", "-g", "@agentdeck_calendar", text).Run()
+	return tmuxExec(DefaultSocketName(), "set-option", "-g", "@agentdeck_calendar", text).Run()
 }
 
 // ClearCalendarSegmentGlobal removes the calendar segment from all sessions' status-right.
 func ClearCalendarSegmentGlobal() error {
-	return exec.Command("tmux", "set-option", "-gu", "@agentdeck_calendar").Run()
+	return tmuxExec(DefaultSocketName(), "set-option", "-gu", "@agentdeck_calendar").Run()
 }
 
 // InitializeStatusBarOptions sets optimal status bar options for agent-deck.
