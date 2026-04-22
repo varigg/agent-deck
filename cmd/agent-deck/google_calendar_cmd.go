@@ -86,6 +86,7 @@ func handleGoogleCalendarTest() {
 	}
 
 	collector, err := calendar.NewCollectorFromConfig(
+		context.Background(),
 		cfg.GoogleCalendar.GetCredentialsPath(),
 		cfg.GoogleCalendar.GetTokenPath(),
 		cfg.GoogleCalendar.CalendarIDs,

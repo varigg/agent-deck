@@ -13781,6 +13781,7 @@ func (h *Home) calendarTicker(cfg *session.GoogleCalendarConfig) {
 	defer close(h.calendarDone)
 
 	collector, err := calendar.NewCollectorFromConfig(
+		h.ctx,
 		cfg.GetCredentialsPath(),
 		cfg.GetTokenPath(),
 		cfg.CalendarIDs,
@@ -13794,13 +13795,40 @@ func (h *Home) calendarTicker(cfg *session.GoogleCalendarConfig) {
 	}
 
 	snapshotPath := cfg.GetSnapshotPath()
+	consecutiveFailures := 0
+
+	clearStaleCalendarState := func(errMsg string) {
+		empty := []calendar.Event{}
+		h.calendarEvents.Store(&empty)
+		if snapshotPath != "" {
+			if removeErr := os.Remove(snapshotPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				uiLog.Warn("calendar_snapshot_remove_failed", slog.String("error", removeErr.Error()))
+			}
+		}
+		h.calendarInitErr.Store(&errMsg)
+	}
 
 	poll := func() {
 		events, err := collector.Collect(h.ctx)
 		if err != nil {
-			uiLog.Warn("calendar_poll_failed", slog.String("error", err.Error()))
+			consecutiveFailures++
+			uiLog.Warn("calendar_poll_failed",
+				slog.String("error", err.Error()),
+				slog.Int("consecutive_failures", consecutiveFailures),
+			)
+			// Clear stale data on auth errors or after 3 consecutive failures
+			// so the UI shows [cal:err] rather than a meeting that may be long gone.
+			msg := strings.ToLower(err.Error())
+			isAuthErr := strings.Contains(msg, "401") ||
+				strings.Contains(msg, "unauthorized") ||
+				strings.Contains(msg, "invalid_grant")
+			if isAuthErr || consecutiveFailures >= 3 {
+				clearStaleCalendarState(err.Error())
+			}
 			return
 		}
+		consecutiveFailures = 0
+		h.calendarInitErr.Store(nil)
 		h.calendarEvents.Store(&events)
 		if snapshotPath != "" {
 			if writeErr := calendar.WriteSnapshot(snapshotPath, events); writeErr != nil {

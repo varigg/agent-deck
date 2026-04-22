@@ -2118,29 +2118,18 @@ func handleStatus(profile string, args []string) {
 		os.Exit(1)
 	}
 
-	if len(instances) == 0 {
-		if *jsonOutput {
-			fmt.Println(`{"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}`)
-		} else if *quiet || *quietShort {
-			fmt.Println("0")
-		} else {
-			fmt.Printf("No sessions in profile '%s'.\n", storage.Profile())
-		}
-		return
-	}
-
-	// Count by status
+	// Count by status (zero when no instances).
 	counts := countByStatus(instances)
 
 	// Output based on flags
 	if *jsonOutput {
 		type statusJSON struct {
-			Waiting     int                  `json:"waiting"`
-			Running     int                  `json:"running"`
-			Idle        int                  `json:"idle"`
-			Error       int                  `json:"error"`
-			Stopped     int                  `json:"stopped"`
-			Total       int                  `json:"total"`
+			Waiting     int                   `json:"waiting"`
+			Running     int                   `json:"running"`
+			Idle        int                   `json:"idle"`
+			Error       int                   `json:"error"`
+			Stopped     int                   `json:"stopped"`
+			Total       int                   `json:"total"`
 			NextMeeting *calendar.MeetingInfo `json:"next_meeting,omitempty"`
 		}
 		var meeting *calendar.MeetingInfo
@@ -2169,6 +2158,16 @@ func handleStatus(profile string, args []string) {
 			os.Exit(1)
 		}
 		fmt.Println(string(output))
+		return
+	}
+
+	if len(instances) == 0 {
+		if *quiet || *quietShort {
+			fmt.Println("0")
+		} else {
+			fmt.Printf("No sessions in profile '%s'.\n", storage.Profile())
+		}
+		return
 	} else if *quiet || *quietShort {
 		fmt.Println(counts.waiting)
 	} else if *verbose || *verboseShort {

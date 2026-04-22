@@ -4392,23 +4392,16 @@ func ClearStatusLeftGlobal() error {
 // and immediately updates status-right so the change is visible without waiting
 // for the next ConfigureStatusBar call. Pass "" to clear the calendar segment.
 func (s *Session) SetCalendarPrefix(text string) error {
-	themeStyle := currentTmuxThemeStyle()
 	s.mu.Lock()
 	s.calendarPrefix = text
 	inject := s.injectStatusLine
 	name := s.Name
-	base := fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
-	var statusRight string
-	if text != "" {
-		statusRight = text + base
-	} else {
-		statusRight = base
-	}
 	s.mu.Unlock()
 	if !inject {
 		return nil
 	}
-	return s.tmuxCmd("set-option", "-t", name, "status-right", statusRight).Run()
+	themeStyle := currentTmuxThemeStyle()
+	return s.tmuxCmd("set-option", "-t", name, "status-right", s.themedStatusRight(themeStyle)).Run()
 }
 
 // InitializeStatusBarOptions sets optimal status bar options for agent-deck.

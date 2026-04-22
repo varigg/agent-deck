@@ -47,7 +47,9 @@ func NewCollector(client *http.Client, calendarIDs []string, lookahead time.Dura
 // NewCollectorFromConfig creates a Collector by loading credentials and token from disk.
 // Uses primitive parameters to avoid an import cycle with internal/session.
 // Call this from callers that have already extracted config values.
-func NewCollectorFromConfig(credentialsPath, tokenPath string, calendarIDs []string, lookahead time.Duration) (*Collector, error) {
+// ctx is used for token refresh and HTTP client lifetime — pass the caller's
+// context so in-flight refreshes are cancelled on shutdown.
+func NewCollectorFromConfig(ctx context.Context, credentialsPath, tokenPath string, calendarIDs []string, lookahead time.Duration) (*Collector, error) {
 	oauthCfg, err := ParseCredentials(credentialsPath)
 	if err != nil {
 		return nil, fmt.Errorf("credentials: %w", err)
@@ -60,7 +62,7 @@ func NewCollectorFromConfig(credentialsPath, tokenPath string, calendarIDs []str
 
 	// TokenSource handles automatic refresh. Wrap it in a persisting source so
 	// every token rotation during the process lifetime is written to disk.
-	rawTS := oauthCfg.TokenSource(context.Background(), tok)
+	rawTS := oauthCfg.TokenSource(ctx, tok)
 	ts := &persistingTokenSource{inner: rawTS, tokenPath: tokenPath, last: tok.AccessToken}
 
 	// Eagerly validate the token. Fail fast if auth is broken so callers get a
@@ -69,7 +71,7 @@ func NewCollectorFromConfig(credentialsPath, tokenPath string, calendarIDs []str
 		return nil, fmt.Errorf("token unavailable — run 'agent-deck google-calendar auth' to re-authorize: %w", err)
 	}
 
-	client := oauth2.NewClient(context.Background(), ts)
+	client := oauth2.NewClient(ctx, ts)
 	return NewCollector(client, calendarIDs, lookahead), nil
 }
 
