@@ -2,7 +2,7 @@ package sysinfo
 
 import "syscall"
 
-// collectDisk gets root filesystem usage via Statfs (cross-platform).
+// collectDisk gets root filesystem usage via Statfs (Linux and macOS only).
 func collectDisk() DiskStat {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs("/", &stat); err != nil {

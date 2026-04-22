@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 )
 
 // WriteSnapshot persists events to a JSON file so other processes (e.g.
 // agent-deck status --json) can read cached calendar data without making a
 // live API call. The file is written atomically via a temp-file rename.
 func WriteSnapshot(path string, events []Event) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
 	data, err := json.Marshal(events)
 	if err != nil {
 		return err
@@ -18,7 +22,11 @@ func WriteSnapshot(path string, events []Event) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // ReadSnapshot loads a previously written snapshot. Returns nil, nil when the

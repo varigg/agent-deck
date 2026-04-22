@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // watcherCreatorSkillFS holds the embedded watcher-creator skill files.
@@ -98,5 +99,6 @@ func keys(m map[string]struct{}) []string {
 	for k := range m {
 		out = append(out, k)
 	}
+	sort.Strings(out)
 	return out
 }

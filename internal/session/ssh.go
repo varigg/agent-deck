@@ -153,20 +153,19 @@ func (r *SSHRunner) Attach(sessionID string) error {
 	sigwinch <- syscall.SIGWINCH
 
 	detachCh := make(chan struct{})
-	outputDone := make(chan struct{})
 
 	// Copy PTY output to stdout.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(outputDone)
 		_, _ = io.Copy(os.Stdout, ptmx)
 	}()
 
 	// Read stdin, intercept Ctrl+Q (all encodings), forward the rest.
-	wg.Add(1)
+	// Not added to wg: os.Stdin.Read blocks indefinitely and cannot be
+	// interrupted portably. The goroutine exits naturally once ptmx is
+	// closed (writes fail) and the user presses any key.
 	go func() {
-		defer wg.Done()
 		buf := make([]byte, 256)
 		for {
 			n, err := os.Stdin.Read(buf)
@@ -203,15 +202,15 @@ func (r *SSHRunner) Attach(sessionID string) error {
 	case <-cmdDone:
 	}
 
-	// Cleanup: close PTY and wait for output to drain.
+	// Cleanup: close PTY and wait for goroutines to finish.
 	_ = ptmx.Close()
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
-	select {
-	case <-outputDone:
-	case <-time.After(50 * time.Millisecond):
-	}
+	// Wait for sigwinch, output, and cmd-wait goroutines. The stdin goroutine
+	// is not in wg (os.Stdin.Read cannot be interrupted portably) but will
+	// exit on its next ptmx.Write attempt after receiving any key.
+	wg.Wait()
 	termreply.QuarantineFor(sshAttachReplyQuarantine)
 
 	// Reset terminal styles that may have leaked from the remote session.
