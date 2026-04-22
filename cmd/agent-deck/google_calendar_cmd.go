@@ -120,5 +120,9 @@ func openBrowser(url string) {
 		exec.Command("open", url).Start() //nolint:errcheck
 	case "linux":
 		exec.Command("xdg-open", url).Start() //nolint:errcheck
+	case "windows":
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start() //nolint:errcheck
+	default:
+		fmt.Fprintf(os.Stderr, "Cannot open browser automatically on %s. Please visit the URL above manually.\n", runtime.GOOS)
 	}
 }

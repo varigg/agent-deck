@@ -115,10 +115,17 @@ func currentTmuxThemeStyle() tmuxThemeStyle {
 }
 
 func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
-	base := fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
 	s.mu.Lock()
 	prefix := s.calendarPrefix
+	displayName := s.DisplayName
+	workDir := s.WorkDir
 	s.mu.Unlock()
+
+	folderName := filepath.Base(workDir)
+	if folderName == "" || folderName == "." {
+		folderName = "~"
+	}
+	base := fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, displayName, folderName)
 	if prefix != "" {
 		return prefix + base
 	}
@@ -126,7 +133,10 @@ func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
 }
 
 func (s *Session) projectDisplayName() string {
-	folderName := filepath.Base(s.WorkDir)
+	s.mu.Lock()
+	workDir := s.WorkDir
+	s.mu.Unlock()
+	folderName := filepath.Base(workDir)
 	if folderName == "" || folderName == "." {
 		folderName = "~"
 	}
@@ -4386,6 +4396,14 @@ func ClearStatusLeftGlobal() error {
 	}
 	// No saved value — fall back to unset (original behavior)
 	return tmuxExec(socket, "set-option", "-gu", "status-left").Run()
+}
+
+// SetDisplayName updates the session's display name under the mutex so concurrent
+// reads in themedStatusRight see a consistent value.
+func (s *Session) SetDisplayName(name string) {
+	s.mu.Lock()
+	s.DisplayName = name
+	s.mu.Unlock()
 }
 
 // SetCalendarPrefix stores text as the calendar segment prefix for this session
