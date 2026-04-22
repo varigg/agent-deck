@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/calendar"
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -266,22 +267,39 @@ func TestGroupScopeValidation(t *testing.T) {
 }
 
 func TestStatusJSON_IncludesNextMeeting(t *testing.T) {
-	out := struct {
+	// Write a real snapshot so we exercise ReadSnapshot → NextMeeting, not just
+	// hand-rolled JSON marshaling.
+	dir := t.TempDir()
+	snapshotPath := filepath.Join(dir, "calendar.json")
+
+	now := time.Now()
+	events := []calendar.Event{
+		{
+			Title:    "Sprint Planning",
+			StartsAt: now.Add(8 * time.Minute),
+			EndsAt:   now.Add(68 * time.Minute),
+		},
+	}
+	require.NoError(t, calendar.WriteSnapshot(snapshotPath, events))
+
+	loaded, err := calendar.ReadSnapshot(snapshotPath)
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+
+	meeting := calendar.NextMeeting(loaded)
+	require.NotNil(t, meeting)
+	assert.Equal(t, "Sprint Planning", meeting.Title)
+	assert.Equal(t, 8, meeting.StartsInMinutes)
+
+	type statusJSON struct {
 		Waiting     int                   `json:"waiting"`
 		Running     int                   `json:"running"`
 		NextMeeting *calendar.MeetingInfo `json:"next_meeting,omitempty"`
-	}{
-		Waiting: 2,
-		Running: 1,
-		NextMeeting: &calendar.MeetingInfo{
-			Title:           "Sprint Planning",
-			StartsInMinutes: 8,
-		},
 	}
-
-	data, err := json.Marshal(out)
+	data, err := json.Marshal(statusJSON{Waiting: 2, Running: 1, NextMeeting: meeting})
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"next_meeting"`)
+	assert.Contains(t, string(data), `"Sprint Planning"`)
 	assert.Contains(t, string(data), `"starts_in_minutes":8`)
 }
 

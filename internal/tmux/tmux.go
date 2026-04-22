@@ -116,8 +116,11 @@ func currentTmuxThemeStyle() tmuxThemeStyle {
 
 func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
 	base := fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
-	if s.calendarPrefix != "" {
-		return s.calendarPrefix + base
+	s.mu.Lock()
+	prefix := s.calendarPrefix
+	s.mu.Unlock()
+	if prefix != "" {
+		return prefix + base
 	}
 	return base
 }
@@ -741,12 +744,13 @@ type Session struct {
 	// phase 1 and Instance.TmuxSocketName. Never mutate after Start().
 	SocketName string
 
-	// calendarPrefix is prepended to status-right when a meeting is upcoming.
-	// Updated via SetCalendarPrefix; empty means no calendar segment shown.
-	calendarPrefix string
-
 	// mu protects all mutable fields below from concurrent access
 	mu sync.Mutex
+
+	// calendarPrefix is prepended to status-right when a meeting is upcoming.
+	// Updated via SetCalendarPrefix; empty means no calendar segment shown.
+	// Protected by mu.
+	calendarPrefix string
 
 	// PERFORMANCE: Lazy initialization flag
 	// When true, ConfigureStatusBar/EnableMouseMode have been run
@@ -4388,12 +4392,23 @@ func ClearStatusLeftGlobal() error {
 // and immediately updates status-right so the change is visible without waiting
 // for the next ConfigureStatusBar call. Pass "" to clear the calendar segment.
 func (s *Session) SetCalendarPrefix(text string) error {
+	themeStyle := currentTmuxThemeStyle()
+	s.mu.Lock()
 	s.calendarPrefix = text
-	if !s.injectStatusLine {
+	inject := s.injectStatusLine
+	name := s.Name
+	base := fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
+	var statusRight string
+	if text != "" {
+		statusRight = text + base
+	} else {
+		statusRight = base
+	}
+	s.mu.Unlock()
+	if !inject {
 		return nil
 	}
-	themeStyle := currentTmuxThemeStyle()
-	return s.tmuxCmd("set-option", "-t", s.Name, "status-right", s.themedStatusRight(themeStyle)).Run()
+	return s.tmuxCmd("set-option", "-t", name, "status-right", statusRight).Run()
 }
 
 // InitializeStatusBarOptions sets optimal status bar options for agent-deck.

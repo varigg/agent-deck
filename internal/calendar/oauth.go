@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"golang.org/x/oauth2"
@@ -39,12 +40,25 @@ func loadToken(path string) (*oauth2.Token, error) {
 }
 
 // SaveToken writes an oauth2.Token to disk with restrictive permissions.
+// The write is atomic: the token is first written to a sibling .tmp file and
+// then renamed into place, so a concurrent reader never sees a partial file.
 func SaveToken(path string, tok *oauth2.Token) error {
 	data, err := json.Marshal(tok)
 	if err != nil {
 		return fmt.Errorf("encode token: %w", err)
 	}
-	return os.WriteFile(path, data, 0600)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create token dir: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return fmt.Errorf("write token: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename token: %w", err)
+	}
+	return nil
 }
 
 // persistingTokenSource wraps an oauth2.TokenSource and writes the token to
