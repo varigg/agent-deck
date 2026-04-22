@@ -261,6 +261,13 @@ func TestHomeUpdateNewDialog(t *testing.T) {
 	model, _ := home.Update(msg)
 
 	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("Update should return *Home")
+	}
+	if !h.newDialog.IsVisible() {
+		t.Error("New dialog should be visible after pressing n")
+	}
+}
 
 func TestHomeUpdateSearchWithGlobal(t *testing.T) {
 	home := NewHome()
@@ -297,14 +304,6 @@ func TestHomeUpdateSearchWithGlobal(t *testing.T) {
 	}
 	if h.search.IsVisible() {
 		t.Error("Local search should NOT be visible when global search opens")
-	}
-}
-
-	if !ok {
-		t.Fatal("Update should return *Home")
-	}
-	if !h.newDialog.IsVisible() {
-		t.Error("New dialog should be visible after pressing n")
 	}
 }
 

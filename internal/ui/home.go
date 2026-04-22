@@ -403,7 +403,7 @@ type Home struct {
 	boundKeysMu             sync.Mutex        // Protects boundKeys for background worker access
 	lastBarText             string            // Cache to avoid updating all sessions every tick
 	lastBarTextMu           sync.Mutex        // Protects lastBarText for background worker access
-	lastCalSeg              string            // Cache to avoid redundant @agentdeck_calendar updates
+	lastCalSeg              string            // Cache to avoid redundant per-session status-right updates
 	lastCalSegMu            sync.Mutex        // Protects lastCalSeg for background worker access
 
 	// Maintenance banner (shown after background maintenance completes)
@@ -820,10 +820,6 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 
 	tmuxSettings := session.GetTmuxSettings()
 	h.manageTmuxNotifications = tmuxSettings.GetInjectStatusLine()
-	if h.manageTmuxNotifications {
-		// Clear any stale calendar segment from a previous process run.
-		_ = tmux.ClearCalendarSegmentGlobal()
-	}
 
 	// Initialize notification manager if enabled in config and tmux status injection is allowed.
 	// All instances manage the notification bar (they share SQLite state, so produce identical output)
@@ -1719,8 +1715,8 @@ func (h *Home) cleanupNotifications() {
 		return
 	}
 
-	// Calendar segment is set regardless of notificationsEnabled — always clear it.
-	_ = tmux.ClearCalendarSegmentGlobal()
+	// Clear any calendar prefix from all live sessions on shutdown.
+	h.applyCalendarPrefixToSessions("")
 
 	if !h.notificationsEnabled || h.notificationManager == nil {
 		return
@@ -3106,7 +3102,7 @@ func (h *Home) syncNotificationsBackground() {
 		}
 	}
 
-	// Update calendar segment in status-right (#{@agentdeck_calendar} prefix, ONE global call).
+	// Update calendar segment in status-right for each live session.
 	// Runs regardless of notificationsEnabled so the calendar segment stays current even when
 	// the notification bar is disabled, but still gated on manageTmuxNotifications.
 	if h.manageTmuxNotifications {
@@ -3115,13 +3111,7 @@ func (h *Home) syncNotificationsBackground() {
 		if calSeg != h.lastCalSeg {
 			h.lastCalSeg = calSeg
 			h.lastCalSegMu.Unlock()
-
-			if calSeg == "" {
-				_ = tmux.ClearCalendarSegmentGlobal()
-			} else {
-				_ = tmux.SetCalendarSegmentGlobal(calSeg)
-			}
-
+			h.applyCalendarPrefixToSessions(calSeg)
 			statusBarChanged = true
 			notifLog.Info("calendar_updated", slog.String("text", calSeg))
 		} else {
@@ -13898,4 +13888,22 @@ func (h *Home) calendarSegment() string {
 	}
 
 	return fmt.Sprintf("#[fg=%s]📅 %s %s#[default] ", color, title, label)
+}
+
+// applyCalendarPrefixToSessions sets the calendar status-right prefix on every
+// live tmux session. Pass "" to clear the segment. Called from the background
+// sync goroutine and from cleanupNotifications — must be safe to call concurrently.
+func (h *Home) applyCalendarPrefixToSessions(prefix string) {
+	h.instancesMu.RLock()
+	instances := make([]*session.Instance, len(h.instances))
+	copy(instances, h.instances)
+	h.instancesMu.RUnlock()
+
+	for _, inst := range instances {
+		ts := inst.GetTmuxSession()
+		if ts == nil {
+			continue
+		}
+		_ = ts.SetCalendarPrefix(prefix)
+	}
 }

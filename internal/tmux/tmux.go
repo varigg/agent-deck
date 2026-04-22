@@ -115,9 +115,11 @@ func currentTmuxThemeStyle() tmuxThemeStyle {
 }
 
 func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
-	// #{@agentdeck_calendar} is evaluated by tmux at render time so one global
-	// option update is reflected across all sessions.
-	return fmt.Sprintf("#{@agentdeck_calendar}#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
+	base := fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
+	if s.calendarPrefix != "" {
+		return s.calendarPrefix + base
+	}
+	return base
 }
 
 func (s *Session) projectDisplayName() string {
@@ -738,6 +740,10 @@ type Session struct {
 	// installation-wide config later changes. See RFC socket-isolation
 	// phase 1 and Instance.TmuxSocketName. Never mutate after Start().
 	SocketName string
+
+	// calendarPrefix is prepended to status-right when a meeting is upcoming.
+	// Updated via SetCalendarPrefix; empty means no calendar segment shown.
+	calendarPrefix string
 
 	// mu protects all mutable fields below from concurrent access
 	mu sync.Mutex
@@ -4378,16 +4384,16 @@ func ClearStatusLeftGlobal() error {
 	return tmuxExec(socket, "set-option", "-gu", "status-left").Run()
 }
 
-// SetCalendarSegmentGlobal sets the @agentdeck_calendar tmux user option globally.
-// Because status-right includes #{@agentdeck_calendar} as a format prefix, this
-// single call is enough to update all sessions — tmux expands the format at render time.
-func SetCalendarSegmentGlobal(text string) error {
-	return tmuxExec(DefaultSocketName(), "set-option", "-g", "@agentdeck_calendar", text).Run()
-}
-
-// ClearCalendarSegmentGlobal removes the calendar segment from all sessions' status-right.
-func ClearCalendarSegmentGlobal() error {
-	return tmuxExec(DefaultSocketName(), "set-option", "-gu", "@agentdeck_calendar").Run()
+// SetCalendarPrefix stores text as the calendar segment prefix for this session
+// and immediately updates status-right so the change is visible without waiting
+// for the next ConfigureStatusBar call. Pass "" to clear the calendar segment.
+func (s *Session) SetCalendarPrefix(text string) error {
+	s.calendarPrefix = text
+	if !s.injectStatusLine {
+		return nil
+	}
+	themeStyle := currentTmuxThemeStyle()
+	return s.tmuxCmd("set-option", "-t", s.Name, "status-right", s.themedStatusRight(themeStyle)).Run()
 }
 
 // InitializeStatusBarOptions sets optimal status bar options for agent-deck.
