@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -541,4 +542,6 @@ func TestClaudePromptDetector_PermissionDialogVariants(t *testing.T) {
 		})
 	}
 
+	// Suppress unused import
+	_ = fmt.Sprintf
 }

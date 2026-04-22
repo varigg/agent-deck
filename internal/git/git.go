@@ -623,9 +623,8 @@ func listRefShortNames(repoDir string, refs ...string) ([]string, error) {
 	return names, nil
 }
 
-// ListBranchCandidates returns unique branch names from local branches and all
-// remotes. Remote branch names keep their remote prefix (e.g. origin/feature)
-// so callers can distinguish remote-only branches.
+// ListBranchCandidates returns unique branch names from local branches and the
+// default remote, normalized to plain branch names without a remote prefix.
 func ListBranchCandidates(repoDir string) ([]string, error) {
 	repoDir = resolveGitInvocationDir(repoDir)
 	if !IsGitRepo(repoDir) {
