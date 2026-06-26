@@ -5054,7 +5054,7 @@ func (i *Instance) SetAcknowledgedFromShared(ack bool) {
 // SyncTmuxDisplayName updates tmux-rendered UI that reflects the current title.
 func (i *Instance) SyncTmuxDisplayName() {
 	if tmuxSess := i.GetTmuxSession(); tmuxSess != nil && tmuxSess.Exists() {
-		tmuxSess.DisplayName = i.Title
+		tmuxSess.SetDisplayName(i.Title)
 		tmuxSess.ConfigureStatusBar()
 		tmuxSess.ConfigureTerminalTitle()
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/asheshgoplani/agent-deck/internal/calendar"
 	"github.com/asheshgoplani/agent-deck/internal/clipboard"
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
@@ -402,6 +403,8 @@ type Home struct {
 	boundKeysMu             sync.Mutex        // Protects boundKeys for background worker access
 	lastBarText             string            // Cache to avoid updating all sessions every tick
 	lastBarTextMu           sync.Mutex        // Protects lastBarText for background worker access
+	lastCalSeg              string            // Cache to avoid redundant per-session status-right updates
+	lastCalSegMu            sync.Mutex        // Protects lastCalSeg for background worker access
 
 	// Maintenance banner (shown after background maintenance completes)
 	maintenanceMsg     string
@@ -449,6 +452,12 @@ type Home struct {
 	// System stats collector (CPU, RAM, disk, etc.)
 	sysStatsCollector *sysinfo.Collector
 	sysStatsConfig    session.SystemStatsSettings
+
+	// Calendar integration
+	calendarEvents atomic.Pointer[[]calendar.Event] // latest poll result (nil = not yet loaded)
+	calendarDone    chan struct{}   // closed when calendarTicker goroutine exits
+	calendarInitErr atomic.Pointer[string] // non-nil stores the init error message; nil means no error recorded
+
 }
 
 // reloadState preserves UI state during storage reload
@@ -994,6 +1003,12 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		h.maintenanceMsgTime = time.Now()
 		h.navHintActive = true
 		markNavHintShown()
+	}
+
+	// Start calendar ticker if enabled
+	if userConfig != nil && userConfig.GoogleCalendar.Enabled {
+		h.calendarDone = make(chan struct{})
+		go h.calendarTicker(&userConfig.GoogleCalendar)
 	}
 
 	return h
@@ -1696,11 +1711,18 @@ func (h *Home) cleanupNotifications() {
 	// Always unbind status-right mouse click (bound unconditionally at init)
 	tmux.UnbindMouseStatusClicks()
 
-	if !h.manageTmuxNotifications || !h.notificationsEnabled || h.notificationManager == nil {
+	if !h.manageTmuxNotifications {
 		return
 	}
 
-	// Clear global status bar (ONE call instead of per-session)
+	// Clear any calendar prefix from all live sessions on shutdown.
+	h.applyCalendarPrefixToSessions("")
+
+	if !h.notificationsEnabled || h.notificationManager == nil {
+		return
+	}
+
+	// Clear global notification status bar
 	_ = tmux.ClearStatusLeftGlobal()
 
 	// Unbind all keys (with mutex protection)
@@ -2995,90 +3017,111 @@ func (h *Home) syncNotificationsBackground() {
 		}
 	}()
 
-	if !h.manageTmuxNotifications || !h.notificationsEnabled || h.notificationManager == nil {
-		return
-	}
+	// Track whether either tmux segment changed so we know whether to refresh.
+	var statusBarChanged bool
 
-	// Phase 1: Check for signal file from Ctrl+b 1-6 shortcuts
-	// CRITICAL: This must be done in background sync too, because the foreground
-	// sync might not run when user is attached to a session (tea.Exec pauses TUI)
-	var sessionToAcknowledgeID string
-	if signalSessionID := tmux.ReadAndClearAckSignal(); signalSessionID != "" {
-		sessionToAcknowledgeID = signalSessionID
-		notifLog.Debug("signal_found", slog.String("session_id", signalSessionID))
+	// Notification bar updates are gated on notifications being enabled.
+	if h.manageTmuxNotifications && h.notificationsEnabled && h.notificationManager != nil {
+		// Phase 1: Check for signal file from Ctrl+b 1-6 shortcuts
+		// CRITICAL: This must be done in background sync too, because the foreground
+		// sync might not run when user is attached to a session (tea.Exec pauses TUI)
+		var sessionToAcknowledgeID string
+		if signalSessionID := tmux.ReadAndClearAckSignal(); signalSessionID != "" {
+			sessionToAcknowledgeID = signalSessionID
+			notifLog.Debug("signal_found", slog.String("session_id", signalSessionID))
 
-		// Track notification switch during attach for cursor sync on detach
-		if h.isAttaching.Load() {
-			h.lastNotifSwitchMu.Lock()
-			h.lastNotifSwitchID = signalSessionID
-			h.lastNotifSwitchMu.Unlock()
-			notifLog.Debug("attach_switch_recorded", slog.String("session_id", signalSessionID))
-		}
-	}
-
-	// Get current instances (copy to avoid race with main goroutine)
-	h.instancesMu.RLock()
-	instances := make([]*session.Instance, len(h.instances))
-	copy(instances, h.instances)
-
-	// Phase 2: Acknowledge the session if signal was received
-	if sessionToAcknowledgeID != "" {
-		if inst, ok := h.instanceByID[sessionToAcknowledgeID]; ok {
-			if ts := inst.GetTmuxSession(); ts != nil {
-				ts.Acknowledge()
-				// Persist ack to SQLite so other instances see it
-				if db := statedb.GetGlobal(); db != nil {
-					_ = db.SetAcknowledged(inst.ID, true)
-				}
-				_ = inst.UpdateStatus()
-				notifLog.Debug(
-					"session_acknowledged",
-					slog.String("title", inst.Title),
-					slog.String("status", string(inst.Status)),
-				)
+			// Track notification switch during attach for cursor sync on detach
+			if h.isAttaching.Load() {
+				h.lastNotifSwitchMu.Lock()
+				h.lastNotifSwitchID = signalSessionID
+				h.lastNotifSwitchMu.Unlock()
+				notifLog.Debug("attach_switch_recorded", slog.String("session_id", signalSessionID))
 			}
 		}
-	}
-	h.instancesMu.RUnlock()
 
-	// Detect currently attached session (may be the user's session during tea.Exec)
-	currentSessionID := h.getAttachedSessionID()
+		// Get current instances (copy to avoid race with main goroutine)
+		h.instancesMu.RLock()
+		instances := make([]*session.Instance, len(h.instances))
+		copy(instances, h.instances)
 
-	// Signal file takes priority for determining "current" session
-	if sessionToAcknowledgeID != "" {
-		currentSessionID = sessionToAcknowledgeID
-	}
+		// Phase 2: Acknowledge the session if signal was received
+		if sessionToAcknowledgeID != "" {
+			if inst, ok := h.instanceByID[sessionToAcknowledgeID]; ok {
+				if ts := inst.GetTmuxSession(); ts != nil {
+					ts.Acknowledge()
+					// Persist ack to SQLite so other instances see it
+					if db := statedb.GetGlobal(); db != nil {
+						_ = db.SetAcknowledged(inst.ID, true)
+					}
+					_ = inst.UpdateStatus()
+					notifLog.Debug(
+						"session_acknowledged",
+						slog.String("title", inst.Title),
+						slog.String("status", string(inst.Status)),
+					)
+				}
+			}
+		}
+		h.instancesMu.RUnlock()
 
-	notifLog.Debug(
-		"sync_state",
-		slog.String("current_session_id", currentSessionID),
-		slog.Int("instances", len(instances)),
-	)
+		// Detect currently attached session (may be the user's session during tea.Exec)
+		currentSessionID := h.getAttachedSessionID()
 
-	// Sync notification manager with current states
-	h.notificationManager.SyncFromInstances(instances, currentSessionID)
-
-	// Update tmux status bar directly
-	barText := h.notificationManager.FormatBar()
-
-	// Only update if changed (avoid unnecessary tmux calls)
-	h.lastBarTextMu.Lock()
-	if barText != h.lastBarText {
-		h.lastBarText = barText
-		h.lastBarTextMu.Unlock()
-
-		if barText == "" {
-			_ = tmux.ClearStatusLeftGlobal()
-		} else {
-			_ = tmux.SetStatusLeftGlobal(barText)
+		// Signal file takes priority for determining "current" session
+		if sessionToAcknowledgeID != "" {
+			currentSessionID = sessionToAcknowledgeID
 		}
 
-		// Force immediate visual update (bypasses 15-second status-interval)
-		_ = tmux.RefreshStatusBarImmediate()
+		notifLog.Debug(
+			"sync_state",
+			slog.String("current_session_id", currentSessionID),
+			slog.Int("instances", len(instances)),
+		)
 
-		notifLog.Info("bar_updated", slog.String("text", barText))
-	} else {
-		h.lastBarTextMu.Unlock()
+		// Sync notification manager with current states
+		h.notificationManager.SyncFromInstances(instances, currentSessionID)
+
+		// Update notification bar (status-left) — only notification text, no calendar
+		barText := h.notificationManager.FormatBar()
+
+		h.lastBarTextMu.Lock()
+		if barText != h.lastBarText {
+			h.lastBarText = barText
+			h.lastBarTextMu.Unlock()
+
+			if barText == "" {
+				_ = tmux.ClearStatusLeftGlobal()
+			} else {
+				_ = tmux.SetStatusLeftGlobal(barText)
+			}
+
+			statusBarChanged = true
+			notifLog.Info("bar_updated", slog.String("text", barText))
+		} else {
+			h.lastBarTextMu.Unlock()
+		}
+	}
+
+	// Update calendar segment in status-right for each live session.
+	// Runs regardless of notificationsEnabled so the calendar segment stays current even when
+	// the notification bar is disabled, but still gated on manageTmuxNotifications.
+	if h.manageTmuxNotifications {
+		calSeg := h.calendarSegment()
+		h.lastCalSegMu.Lock()
+		if calSeg != h.lastCalSeg {
+			h.lastCalSeg = calSeg
+			h.lastCalSegMu.Unlock()
+			h.applyCalendarPrefixToSessions(calSeg)
+			statusBarChanged = true
+			notifLog.Info("calendar_updated", slog.String("text", calSeg))
+		} else {
+			h.lastCalSegMu.Unlock()
+		}
+	}
+
+	// Force immediate visual update (bypasses 15-second status-interval) only when needed.
+	if statusBarChanged {
+		_ = tmux.RefreshStatusBarImmediate()
 	}
 
 	// CRITICAL: Update key bindings in background too!
@@ -6866,6 +6909,13 @@ func (h *Home) performFinalShutdown(shutdownPool bool) tea.Cmd {
 				uiLog.Warn("status_worker_stop_timeout")
 			}
 		}
+		if h.calendarDone != nil {
+			select {
+			case <-h.calendarDone:
+			case <-time.After(5 * time.Second):
+				uiLog.Warn("calendar_ticker_stop_timeout")
+			}
+		}
 		// Wait for log workers to drain before closing the watcher they depend on
 		logDone := make(chan struct{})
 		go func() {
@@ -9196,6 +9246,11 @@ func (h *Home) View() string {
 			sysStyle := lipgloss.NewStyle().Foreground(ColorComment)
 			stats += statsSep + sysStyle.Render(formatted)
 		}
+	}
+
+	// Calendar segment (next upcoming meeting, urgency-coloured)
+	if calText := h.calendarTUISegment(); calText != "" {
+		stats += statsSep + calText
 	}
 
 	// Version badge (right-aligned, subtle inline style - no border to keep single line)
@@ -13718,4 +13773,165 @@ func cachedFilterBarHint() string {
 			Render("  !@#$ filter • 0 all • " + FilterKeyActive + " open")
 	}
 	return _cachedFilterBarHint
+}
+
+// calendarTicker polls Google Calendar at the configured interval.
+// Runs as a background goroutine; exits when h.ctx is cancelled.
+func (h *Home) calendarTicker(cfg *session.GoogleCalendarConfig) {
+	defer close(h.calendarDone)
+
+	collector, err := calendar.NewCollectorFromConfig(
+		h.ctx,
+		cfg.GetCredentialsPath(),
+		cfg.GetTokenPath(),
+		cfg.CalendarIDs,
+		cfg.GetLookahead(),
+	)
+	if err != nil {
+		uiLog.Warn("calendar_init_failed", slog.String("error", err.Error()))
+		msg := err.Error()
+		h.calendarInitErr.Store(&msg)
+		return
+	}
+
+	snapshotPath := cfg.GetSnapshotPath()
+	consecutiveFailures := 0
+
+	clearStaleCalendarState := func(errMsg string) {
+		empty := []calendar.Event{}
+		h.calendarEvents.Store(&empty)
+		if snapshotPath != "" {
+			if removeErr := os.Remove(snapshotPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				uiLog.Warn("calendar_snapshot_remove_failed", slog.String("error", removeErr.Error()))
+			}
+		}
+		h.calendarInitErr.Store(&errMsg)
+	}
+
+	poll := func() {
+		events, err := collector.Collect(h.ctx)
+		if err != nil {
+			consecutiveFailures++
+			uiLog.Warn("calendar_poll_failed",
+				slog.String("error", err.Error()),
+				slog.Int("consecutive_failures", consecutiveFailures),
+			)
+			// Clear stale data on auth errors or after 3 consecutive failures
+			// so the UI shows [cal:err] rather than a meeting that may be long gone.
+			msg := strings.ToLower(err.Error())
+			isAuthErr := strings.Contains(msg, "401") ||
+				strings.Contains(msg, "unauthorized") ||
+				strings.Contains(msg, "invalid_grant")
+			if isAuthErr || consecutiveFailures >= 3 {
+				clearStaleCalendarState(err.Error())
+			}
+			return
+		}
+		consecutiveFailures = 0
+		h.calendarInitErr.Store(nil)
+		h.calendarEvents.Store(&events)
+		if snapshotPath != "" {
+			if writeErr := calendar.WriteSnapshot(snapshotPath, events); writeErr != nil {
+				uiLog.Warn("calendar_snapshot_write_failed", slog.String("error", writeErr.Error()))
+			}
+		}
+	}
+
+	poll() // Collect immediately on startup
+
+	ticker := time.NewTicker(cfg.GetPollInterval())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-ticker.C:
+			poll()
+		}
+	}
+}
+
+// calendarTUISegment returns a lipgloss-rendered string for use in the TUI header bar.
+// Returns empty string when calendar is disabled, not yet loaded, or no events.
+// Returns a red [cal:err] indicator when the collector failed to initialise.
+func (h *Home) calendarTUISegment() string {
+	if v := h.calendarInitErr.Load(); v != nil {
+		return lipgloss.NewStyle().Foreground(ColorRed).Render("📅 cal:err")
+	}
+	ptr := h.calendarEvents.Load()
+	if ptr == nil {
+		return ""
+	}
+	events := *ptr
+	if len(events) == 0 {
+		return ""
+	}
+
+	e := events[0]
+	label := e.TimeUntilLabel()
+	title := runewidth.Truncate(e.Title, 20, "..")
+
+	var color lipgloss.Color
+	switch e.Urgency() {
+	case calendar.UrgencyCritical:
+		color = ColorRed
+	case calendar.UrgencyWarning:
+		color = ColorYellow
+	default:
+		color = ColorComment
+	}
+
+	return lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("📅 %s %s", title, label))
+}
+
+// calendarSegment returns a tmux status bar segment for the next upcoming meeting.
+// Returns empty string when calendar is disabled, not yet loaded, or no events.
+// Returns a [cal:err] indicator when the collector failed to initialise.
+func (h *Home) calendarSegment() string {
+	if v := h.calendarInitErr.Load(); v != nil {
+		return "#[fg=#f7768e]📅 cal:err#[default] "
+	}
+	ptr := h.calendarEvents.Load()
+	if ptr == nil {
+		return ""
+	}
+	events := *ptr
+	if len(events) == 0 {
+		return ""
+	}
+
+	e := events[0]
+	label := e.TimeUntilLabel()
+	title := strings.ReplaceAll(runewidth.Truncate(e.Title, 20, ".."), "#", "##")
+
+	var color string
+	switch e.Urgency() {
+	case calendar.UrgencyCritical:
+		color = "#f7768e" // red
+	case calendar.UrgencyWarning:
+		color = "#e0af68" // yellow
+	default:
+		color = "#787fa0" // dim
+	}
+
+	return fmt.Sprintf("#[fg=%s]📅 %s %s#[default] ", color, title, label)
+}
+
+// applyCalendarPrefixToSessions sets the calendar status-right prefix on every
+// live tmux session. Pass "" to clear the segment. Called from the background
+// sync goroutine and from cleanupNotifications — must be safe to call concurrently.
+func (h *Home) applyCalendarPrefixToSessions(prefix string) {
+	h.instancesMu.RLock()
+	instances := make([]*session.Instance, len(h.instances))
+	copy(instances, h.instances)
+	h.instancesMu.RUnlock()
+
+	for _, inst := range instances {
+		ts := inst.GetTmuxSession()
+		if ts == nil {
+			continue
+		}
+		_ = ts.SetCalendarPrefix(prefix)
+	}
 }

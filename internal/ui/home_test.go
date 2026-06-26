@@ -269,6 +269,44 @@ func TestHomeUpdateNewDialog(t *testing.T) {
 	}
 }
 
+func TestHomeUpdateSearchWithGlobal(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	// Create a mock index
+	tmpDir := t.TempDir()
+	config := session.GlobalSearchSettings{
+		Enabled:        true,
+		Tier:           "instant",
+		MemoryLimitMB:  100,
+		IndexRateLimit: 100,
+	}
+	index, err := session.NewGlobalSearchIndex(tmpDir, config)
+	if err != nil {
+		t.Fatalf("Failed to create test index: %v", err)
+	}
+	defer index.Close()
+
+	home.globalSearchIndex = index
+	home.globalSearch.SetIndex(index)
+
+	// Press / to open search - should open global search when index is available
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}
+	model, _ := home.Update(msg)
+
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("Update should return *Home")
+	}
+	if !h.globalSearch.IsVisible() {
+		t.Error("Global search should be visible after pressing / when index is available")
+	}
+	if h.search.IsVisible() {
+		t.Error("Local search should NOT be visible when global search opens")
+	}
+}
+
 func TestHomeLoadSessions(t *testing.T) {
 	home := NewHome()
 
@@ -2835,5 +2873,16 @@ func TestHandleMainKeyQuickApproveSkipsNonClaudeTool(t *testing.T) {
 	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if _, ok := model.(*Home); !ok {
 		t.Fatal("handleMainKey should return *Home")
+	}
+}
+
+func TestCalendarSegment_ShowsErrorWhenInitFailed(t *testing.T) {
+	h := &Home{}
+	msg := "token expired — run 'agent-deck google-calendar auth' to re-authorize"
+	h.calendarInitErr.Store(&msg)
+
+	result := h.calendarSegment()
+	if !strings.Contains(result, "cal:err") {
+		t.Errorf("calendarSegment should contain 'cal:err' when init failed, got: %q", result)
 	}
 }

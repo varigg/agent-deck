@@ -24,6 +24,7 @@ import (
 	"github.com/muesli/termenv"
 	"golang.org/x/term"
 
+	"github.com/asheshgoplani/agent-deck/internal/calendar"
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
 	"github.com/asheshgoplani/agent-deck/internal/git"
@@ -323,6 +324,9 @@ func main() {
 			return
 		case "debug-dump":
 			handleDebugDump()
+			return
+		case "google-calendar":
+			handleGoogleCalendar(args[1:])
 			return
 		}
 	}
@@ -2047,6 +2051,7 @@ type statusCounts struct {
 	total   int
 }
 
+
 // countByStatus counts sessions by their status
 func countByStatus(instances []*session.Instance) statusCounts {
 	// Warm tmux pane-title cache + load hook statuses so `status`/`status --json`
@@ -2113,39 +2118,56 @@ func handleStatus(profile string, args []string) {
 		os.Exit(1)
 	}
 
-	if len(instances) == 0 {
-		if *jsonOutput {
-			fmt.Println(`{"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}`)
-		} else if *quiet || *quietShort {
-			fmt.Println("0")
-		} else {
-			fmt.Printf("No sessions in profile '%s'.\n", storage.Profile())
-		}
-		return
-	}
-
-	// Count by status
+	// Count by status (zero when no instances).
 	counts := countByStatus(instances)
 
 	// Output based on flags
 	if *jsonOutput {
 		type statusJSON struct {
-			Waiting int `json:"waiting"`
-			Running int `json:"running"`
-			Idle    int `json:"idle"`
-			Error   int `json:"error"`
-			Stopped int `json:"stopped"`
-			Total   int `json:"total"`
+			Waiting     int                   `json:"waiting"`
+			Running     int                   `json:"running"`
+			Idle        int                   `json:"idle"`
+			Error       int                   `json:"error"`
+			Stopped     int                   `json:"stopped"`
+			Total       int                   `json:"total"`
+			NextMeeting *calendar.MeetingInfo `json:"next_meeting,omitempty"`
 		}
-		output, _ := json.Marshal(statusJSON{
-			Waiting: counts.waiting,
-			Running: counts.running,
-			Idle:    counts.idle,
-			Error:   counts.err,
-			Stopped: counts.stopped,
-			Total:   counts.total,
+		var meeting *calendar.MeetingInfo
+		if cfg, cfgErr := session.LoadUserConfig(); cfgErr != nil {
+			slog.Warn("calendar: config load failed", slog.String("error", cfgErr.Error()))
+		} else if cfg.GoogleCalendar.Enabled {
+			events, snapErr := calendar.ReadSnapshot(cfg.GoogleCalendar.GetSnapshotPath())
+			if snapErr != nil {
+				slog.Warn("calendar: snapshot read failed", slog.String("error", snapErr.Error()))
+			} else {
+				meeting = calendar.NextMeeting(events)
+			}
+		}
+		output, err := json.Marshal(statusJSON{
+			Waiting:     counts.waiting,
+			Running:     counts.running,
+			Idle:        counts.idle,
+			Error:       counts.err,
+			Stopped:     counts.stopped,
+			Total:       counts.total,
+			NextMeeting: meeting,
 		})
+		if err != nil {
+			slog.Error("handleStatus: failed to marshal JSON", slog.String("error", err.Error()))
+			fmt.Fprintln(os.Stderr, "error: failed to marshal status JSON")
+			os.Exit(1)
+		}
 		fmt.Println(string(output))
+		return
+	}
+
+	if len(instances) == 0 {
+		if *quiet || *quietShort {
+			fmt.Println("0")
+		} else {
+			fmt.Printf("No sessions in profile '%s'.\n", storage.Profile())
+		}
+		return
 	} else if *quiet || *quietShort {
 		fmt.Println(counts.waiting)
 	} else if *verbose || *verboseShort {

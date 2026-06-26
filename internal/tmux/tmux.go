@@ -115,11 +115,28 @@ func currentTmuxThemeStyle() tmuxThemeStyle {
 }
 
 func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
-	return fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
+	s.mu.Lock()
+	prefix := s.calendarPrefix
+	displayName := s.DisplayName
+	workDir := s.WorkDir
+	s.mu.Unlock()
+
+	folderName := filepath.Base(workDir)
+	if folderName == "" || folderName == "." {
+		folderName = "~"
+	}
+	base := fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, displayName, folderName)
+	if prefix != "" {
+		return prefix + base
+	}
+	return base
 }
 
 func (s *Session) projectDisplayName() string {
-	folderName := filepath.Base(s.WorkDir)
+	s.mu.Lock()
+	workDir := s.WorkDir
+	s.mu.Unlock()
+	folderName := filepath.Base(workDir)
 	if folderName == "" || folderName == "." {
 		folderName = "~"
 	}
@@ -739,6 +756,11 @@ type Session struct {
 
 	// mu protects all mutable fields below from concurrent access
 	mu sync.Mutex
+
+	// calendarPrefix is prepended to status-right when a meeting is upcoming.
+	// Updated via SetCalendarPrefix; empty means no calendar segment shown.
+	// Protected by mu.
+	calendarPrefix string
 
 	// PERFORMANCE: Lazy initialization flag
 	// When true, ConfigureStatusBar/EnableMouseMode have been run
@@ -1936,7 +1958,7 @@ func (s *Session) buildStatusBarArgs() []string {
 		{"status-style", themeStyle.statusStyle},
 		{"status-left-length", "120"},
 		{"status-right", rightStatus},
-		{"status-right-length", "80"},
+		{"status-right-length", "120"},
 	}
 
 	var args []string
@@ -4322,9 +4344,7 @@ func ListAgentDeckSessions() ([]string, error) {
 // SetStatusLeft sets the left side of tmux status bar for a session.
 // Used by NotificationManager to display waiting session notifications.
 func SetStatusLeft(sessionName, text string) error {
-	// Escape single quotes for tmux by replacing ' with '\''
-	escaped := strings.ReplaceAll(text, "'", "'\\''")
-	cmd := tmuxExec(DefaultSocketName(), "set-option", "-t", sessionName, "status-left", escaped)
+	cmd := tmuxExec(DefaultSocketName(), "set-option", "-t", sessionName, "status-left", text)
 	return cmd.Run()
 }
 
@@ -4361,8 +4381,7 @@ func captureOriginalStatusLeft() {
 // On first call, captures the existing status-left so ClearStatusLeftGlobal can restore it.
 func SetStatusLeftGlobal(text string) error {
 	savedStatusLeft.Do(captureOriginalStatusLeft)
-	escaped := strings.ReplaceAll(text, "'", "'\\''")
-	cmd := tmuxExec(DefaultSocketName(), "set-option", "-g", "status-left", escaped)
+	cmd := tmuxExec(DefaultSocketName(), "set-option", "-g", "status-left", text)
 	return cmd.Run()
 }
 
@@ -4373,11 +4392,34 @@ func SetStatusLeftGlobal(text string) error {
 func ClearStatusLeftGlobal() error {
 	socket := DefaultSocketName()
 	if savedStatusLeft.captured {
-		escaped := strings.ReplaceAll(savedStatusLeft.value, "'", "'\\''")
-		return tmuxExec(socket, "set-option", "-g", "status-left", escaped).Run()
+		return tmuxExec(socket, "set-option", "-g", "status-left", savedStatusLeft.value).Run()
 	}
 	// No saved value — fall back to unset (original behavior)
 	return tmuxExec(socket, "set-option", "-gu", "status-left").Run()
+}
+
+// SetDisplayName updates the session's display name under the mutex so concurrent
+// reads in themedStatusRight see a consistent value.
+func (s *Session) SetDisplayName(name string) {
+	s.mu.Lock()
+	s.DisplayName = name
+	s.mu.Unlock()
+}
+
+// SetCalendarPrefix stores text as the calendar segment prefix for this session
+// and immediately updates status-right so the change is visible without waiting
+// for the next ConfigureStatusBar call. Pass "" to clear the calendar segment.
+func (s *Session) SetCalendarPrefix(text string) error {
+	s.mu.Lock()
+	s.calendarPrefix = text
+	inject := s.injectStatusLine
+	name := s.Name
+	s.mu.Unlock()
+	if !inject {
+		return nil
+	}
+	themeStyle := currentTmuxThemeStyle()
+	return s.tmuxCmd("set-option", "-t", name, "status-right", s.themedStatusRight(themeStyle)).Run()
 }
 
 // InitializeStatusBarOptions sets optimal status bar options for agent-deck.
